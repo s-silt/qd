@@ -48,7 +48,8 @@ if __name__ == "__main__":
     tpl_file = sys.argv[1]
     try:
         # deepcode ignore PT: tpl_file is a file
-        tpl = json.load(open(tpl_file, encoding="utf-8"))
+        with open(tpl_file, encoding="utf-8") as _f:
+            tpl = json.load(_f)
     except Exception as e:
         logger_qd.error(e, exc_info=config.traceback_print)
         usage()
@@ -67,7 +68,8 @@ if __name__ == "__main__":
     if ENV_FILE:
         try:
             # deepcode ignore PT: env_file is a file
-            env = json.load(open(ENV_FILE, encoding="utf-8"))
+            with open(ENV_FILE, encoding="utf-8") as _f:
+                env = json.load(_f)
         except Exception as e:
             logger_qd.error(e, exc_info=config.traceback_print)
             usage()

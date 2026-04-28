@@ -164,7 +164,7 @@ class BaseWorker:
         Returns:
             next (float): fixed next timestamp
         """
-        date = datetime.datetime.utcfromtimestamp(next)
+        date = datetime.datetime.fromtimestamp(next, tz=datetime.timezone.utc)
         local_date = date - datetime.timedelta(minutes=gmt_offset)
         if local_date.hour < 2:
             next += 2 * 60 * 60

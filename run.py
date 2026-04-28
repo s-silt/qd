@@ -58,7 +58,8 @@ def start_server():
         converter = db_converter.DBconverter(database)
         asyncio.run(converter.convert_new_type(database))
 
-        default_version = json.load(open(os.path.join(os.path.dirname(__file__), 'version.json'), 'r', encoding='utf-8'))['version']
+        with open(os.path.join(os.path.dirname(__file__), 'version.json'), 'r', encoding='utf-8') as _f:
+        default_version = json.load(_f)['version']
         app = Application(database, default_version)
         http_server = HTTPServer(app, xheaders=True)
         http_server.bind(port, config.bind)

@@ -204,11 +204,15 @@ class VerifyHandler(BaseHandler):
                 verified_code = base64.b64decode(code)
                 userid, verified_code = await self.db.user.decrypt(0, verified_code, sql_session=sql_session)
                 user = await self.db.user.get(userid, fields=('id', 'email', 'email_verified'), sql_session=sql_session)
-                assert user
-                assert not user['email_verified']
+                if not user:
+                    raise ValueError("User not found")
+                if user['email_verified']:
+                    raise ValueError("Email already verified")
                 email, time_time = await self.db.user.decrypt(userid, verified_code, sql_session=sql_session)
-                assert time.time() - time_time < 30 * 24 * 60 * 60
-                assert user['email'] == email
+                if time.time() - time_time >= 30 * 24 * 60 * 60:
+                    raise ValueError("Verification code expired")
+                if user['email'] != email:
+                    raise ValueError("Email mismatch")
 
                 await self.db.user.mod(userid,
                                        email_verified=True,
@@ -232,10 +236,13 @@ class PasswordResetHandler(BaseHandler):
             verified_code = base64.b64decode(code)
             userid, verified_code = await self.db.user.decrypt(0, verified_code)
             user = await self.db.user.get(userid, fields=('id', 'email', 'mtime'))
-            assert user
+            if not user:
+                raise ValueError("User not found")
             mtime, time_time = await self.db.user.decrypt(userid, verified_code)
-            assert mtime == user['mtime']
-            assert time.time() - time_time < 60 * 60
+            if mtime != user['mtime']:
+                raise ValueError("Token mismatch")
+            if time.time() - time_time >= 60 * 60:
+                raise ValueError("Reset link expired")
         except Exception as e:
             self.evil(+10)
             logger_web_handler.error('%r', e, exc_info=config.traceback_print)
@@ -277,10 +284,13 @@ class PasswordResetHandler(BaseHandler):
                     verified_code = base64.b64decode(code)
                     userid, verified_code = await self.db.user.decrypt(0, verified_code, sql_session=sql_session)
                     user = await self.db.user.get(userid, fields=('id', 'email', 'mtime', 'email_verified'), sql_session=sql_session)
-                    assert user
+                    if not user:
+                        raise ValueError("User not found")
                     mtime, time_time = await self.db.user.decrypt(userid, verified_code, sql_session=sql_session)
-                    assert mtime == user['mtime']
-                    assert time.time() - time_time < 60 * 60
+                    if mtime != user['mtime']:
+                        raise ValueError("Token mismatch")
+                    if time.time() - time_time >= 60 * 60:
+                        raise ValueError("Reset link expired")
                 except Exception as e:
                     self.evil(+10)
                     logger_web_handler.error('%r', e, exc_info=config.traceback_print)
