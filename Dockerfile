@@ -16,8 +16,6 @@ RUN sed -i 's/mirrors.ustc.edu.cn/dl-cdn.alpinelinux.org/g' /etc/apk/repositorie
     apk update && apk add --update --no-cache openssh-client && \
     chmod 600 /root/.ssh/id_rsa && \
     ssh-keyscan gitee.com > /root/.ssh/known_hosts && \
-    let num=$RANDOM%100+10 && \
-    sleep $num && \
     git clone --depth 1 git@gitee.com:qd-today/qd.git /gitclone_tmp && \
     yes | cp -rf /gitclone_tmp/. /usr/src/app && \
     rm -rf /gitclone_tmp && \

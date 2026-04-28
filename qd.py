@@ -23,16 +23,16 @@ logger_qd = Log("QD").getlogger()
 
 
 def check_port(port):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(5)
-    try:
-        s.connect(("127.0.0.1", port))
-        s.shutdown(2)
-        logger_qd.debug("Port %s is used", port)
-        return False
-    except Exception:
-        logger_qd.debug("Port %s is available", port)
-        return True
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(5)
+        try:
+            s.connect(("127.0.0.1", port))
+            s.shutdown(socket.SHUT_RDWR)
+            logger_qd.debug("Port %s is used", port)
+            return False
+        except (ConnectionRefusedError, OSError):
+            logger_qd.debug("Port %s is available", port)
+            return True
 
 
 def usage():

@@ -56,7 +56,7 @@ cookie_secure_mode = bool(
 cookie_secret = hashlib.sha256(
     os.getenv("COOKIE_SECRET", "binux").encode("utf-8")
 ).digest()  # Cookie 加密密钥, 强烈建议修改
-pbkdf2_iterations = int(os.getenv("PBKDF2_ITERATIONS", "400"))  # pbkdf2 迭代次数
+pbkdf2_iterations = int(os.getenv("PBKDF2_ITERATIONS", "600000"))  # OWASP recommendation for PBKDF2-SHA256
 aes_key = hashlib.sha256(
     os.getenv("AES_KEY", "binux").encode("utf-8")
 ).digest()  # AES 加密密钥, 强烈建议修改

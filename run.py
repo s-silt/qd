@@ -56,10 +56,7 @@ def start_server():
     try:
         database = DB()
         converter = db_converter.DBconverter(database)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        run = asyncio.ensure_future(converter.convert_new_type(database) , loop=loop)
-        loop.run_until_complete(run)
+        asyncio.run(converter.convert_new_type(database))
 
         default_version = json.load(open(os.path.join(os.path.dirname(__file__), 'version.json'), 'r', encoding='utf-8'))['version']
         app = Application(database, default_version)
@@ -88,10 +85,7 @@ def start_server():
         io_loop.start()
     except KeyboardInterrupt :
         logger_qd.info("Http Server is being manually interrupted... ")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        run = asyncio.ensure_future(engine.dispose() , loop=loop)
-        loop.run_until_complete(run)
+        asyncio.run(engine.dispose())
         logger_qd.info("Http Server is ended. ")
 
 
