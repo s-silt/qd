@@ -75,7 +75,7 @@ class _BaseHandler(tornado.web.RequestHandler):
             return ret
         user = umsgpack.unpackb(ret)
         try:
-            user['isadmin'] = 'admin' in user['role'] if isinstance(user, Union[Mapping, MutableMapping]) and user.get('role') else False
+            user['isadmin'] = 'admin' in user['role'] if isinstance(user, (Mapping, MutableMapping)) and user.get('role') else False
         except Exception as e:
             logger_web_handler.debug(e, exc_info=config.traceback_print)
             return None

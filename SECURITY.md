@@ -38,3 +38,15 @@ Use this section to tell people how to report a vulnerability.
 Tell them where to go, how often they can expect to get an update on a
 reported vulnerability, what to expect if the vulnerability is accepted or
 declined, etc. -->
+
+## 披露时间线 (Disclosure Timeline)
+
+- **0天**：收到漏洞报告后，安全团队将在 **48小时内** 确认收到并开始初步评估。
+- **7天内**：完成漏洞严重性评估，并向报告者反馈初步处理方案。
+- **30天内**：对于确认的漏洞，制定修复计划并开始实施修复。
+- **90天内**：完成漏洞修复并发布安全更新。
+
+在此期间，我们承诺：
+- 与报告者保持透明沟通
+- 在修复发布前不会公开漏洞细节
+- 在修复发布后致谢报告者（除非报告者希望匿名）
