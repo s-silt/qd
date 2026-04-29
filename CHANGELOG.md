@@ -8,6 +8,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Nothing right now.
 
+## [20260429] - 2026.04.29 更新（s-silt fork）
+
+### Features
+
+1. Feature(AI): 🤖 新增 **AI 智能识别签到**：HAR 编辑器右上角加按钮，把抓到的 HAR 一键交给兼容 OpenAI 协议的 LLM（OpenAI / DeepSeek / 通义 / Moonshot / 本地 Ollama 等）自动挑出签到接口，输出最小化 HAR
+   - 后端 `libs/ai_client.py` + `/har/ai_analyze` `/har/ai_status` 端点
+   - 前端 `web/static/har/ai_ctrl.js` AngularJS 控制器与编辑器内弹窗
+   - 配置：`AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` / `AI_TIMEOUT` / `AI_MAX_HAR_ENTRIES` / `AI_HAR_BODY_TRUNCATE_BYTES` / `AI_HAR_HEADER_TRUNCATE_BYTES`
+   - HAR 喂给 AI 前预处理：仅保留必要 header、Cookie 只送名称、body 默认截断 500 字
+2. Feature(AutoCapture): 🪄 新增 **URL 自动抓包**：给 URL + Cookie/storage_state，Playwright sidecar 自动加载页面、启发式找签到按钮、点击并录制 HAR，可串接 AI 直接产模板
+   - 独立容器 `services/playwright`（FastAPI + Chromium，约 1.5GB），通过 docker-compose 部署
+   - 启发式 selector 优先级：`data-testid` > `#id` > `[name=]` > nth-of-type（最多 4 层），输出 `quality: stable/medium/fragile` 字段供前端展示
+   - 反检测：抹掉 `navigator.webdriver`、随机点击延迟、中文 locale + 中国时区
+   - 配置：`PLAYWRIGHT_SIDECAR_URL` / `PLAYWRIGHT_CAPTURE_TIMEOUT` / `PLAYWRIGHT_MAX_HAR_BYTES`
+3. Feature(DB): 💾 `db.tasklog/task/tpl.list` 的 kwargs 现支持 `list/tuple/set` 自动转 SQL `IN`，向后兼容（标量仍走 `=`）
+4. Feature(DB): 💾 `db.tasklog.delete` 支持传 ID 列表执行批量 `DELETE ... WHERE id IN (...)`
+
+### Performance
+
+1. Perf(worker): 🚀 修复 `worker.push_batch` N+1 查询：原实现对每个 task 单独 SELECT tasklog、对每个 tplid 单独 SELECT tpl，复杂度 `O(任务数 × DB 往返)`。重构为按用户聚合后批量查询，复杂度降为 `O(用户数 × DB 往返)`
+2. Perf(worker): 🚀 `worker.clear_log` 由逐条 `DELETE` 改为一次 `DELETE ... WHERE id IN (...)`
+
+### Security
+
+1. Security(startup): 🔒 启动时若检测到 `COOKIE_SECRET` / `AES_KEY` 仍为默认 `binux` 或 `DOMAIN` 未设置，记录 WARNING（不阻止启动），避免 Docker 部署遗忘覆盖密钥
+2. Security(playwright): 🔒 sidecar 启动时若 `ALLOW_HOSTS` 未设置输出 SSRF 风险 WARNING
+3. Security(playwright): 🔒 `services/playwright/security.py::sanitize_storage_state` 剔除与请求 URL host 不匹配的 cookie / origin，防止用户把跨域凭据塞进来导致 sidecar 代携其它站点身份；处理子域 / 父域匹配并防御 `example.com` vs `notexample.com` 的子串攻击
+4. Security(har): 🔒 QD 主端转发 sidecar 响应时强制 `PLAYWRIGHT_MAX_HAR_BYTES`（默认 50MB）流式上限，避免恶意 / 异常大 HAR 撑爆内存
+
+### Fixed
+
+1. Bugfix(run): 🐛 修复 `run.py` 第 61-62 行已存在的 `IndentationError`（`with open(version.json) as _f:` 块下一行未缩进，导致原代码无法直接 `python run.py` 启动）
+2. Bugfix(har/ai): 🐛 AI 失败时编辑器分别显示 `ai_skipped` / `ai_error` 状态条，让用户清楚 "应用为模板" 按钮会落到原始 HAR 而非 AI 优化版
+
+### Changed
+
+1. Refactor(har): ♻️ 提取 `_analyze_har_with_ai` helper，消除 `HARAIAnalyze` 与 `HARAutoCapture` 中 ~30 行的 AI 调用重复
+2. Refactor(ai_client): ♻️ 抽出 `read_capped(stream_iter, max_bytes)` + `HARSizeLimitExceeded` 异常类，让 HAR 大小限流逻辑可单元测试
+3. Refactor(playwright): ♻️ `app.py` 把 `/capture` 路由内联的浏览器流程抽取为 `perform_capture(browser, req, semaphore)` 独立函数，集成测试可直接调用
+4. Refactor(playwright): ♻️ 把 `_parse_cookie_str_to_storage_state` / `_sanitize_storage_state` 移出 `app.py` 到独立 `security.py`，让单元测试无需 fastapi/playwright 即可跑
+5. Refactor(ai_client): ♻️ `parse_ai_response` 改用正则提取 `` ```json...``` `` 围栏，兼容大写 `` ```JSON ``、围栏内多余空白；空输入 / 截不到 `{` 等情况显式抛 `AIClientError`
+6. Refactor(frontend): ♻️ `ai_ctrl.js` / `auto_capture_ctrl.js` 移除 jQuery `.button('loading')` 调用，改用 `$scope.busy` + `ng-disabled`，模态未渲染时也无副作用
+
+### Tests
+
+1. Test(unit): ✅ 新增 `tests/test_ai_client.py` 与 `services/playwright/test_button_finder.py`，共 **44** 个单元测试覆盖 HAR 噪声过滤、Header 裁剪、JSON 容错解析、AI 结果转 HAR、流式 read_capped 边界、按钮启发式打分、storage_state 跨域剔除、JS 脚本静态守卫等
+2. Test(integration): ✅ 新增 `services/playwright/test_integration.py`：9 个端到端用例启动真实 Chromium 与 aiohttp 测试服务器，验证按钮发现 / Cookie 注入 / storage_state 失效 / 跨域剔除 / 候选回退 / wait_after_click HAR 录制等完整抓包流程；缺依赖时整个文件优雅跳过
+
+### Docs
+
+1. Docs(zh_CN): 📖 `web/docs/zh_CN/guide/har-capture.md`：浏览器（Chrome / Edge / Firefox / Safari）、桌面工具（Fiddler / Charles / mitmproxy）、移动端（Android / iOS）抓 HAR 完整指南
+2. Docs(zh_CN): 📖 `web/docs/zh_CN/guide/ai-sign-template.md`：启用 AI 功能、操作流程、提示词技巧、Token 成本、安全合规
+3. Docs(zh_CN): 📖 `web/docs/zh_CN/guide/auto-capture.md`：URL 自动抓包架构、Cookie 复制步骤、SSRF 防御、API 参考
+4. Docs(zh_CN): 📖 `web/docs/zh_CN/guide/docker-deploy.md`：fork 专用 Docker 部署完整教程，含 MySQL / Nginx + HTTPS / 备份回滚 / 升级兼容性说明 / 6 个高频 FAQ
+5. Docs(README): 📖 README 用「快速开始」段替换原 `操作说明` / `更新日志`，按部署 → 抓 HAR → AI 生成 → URL 自动抓包顺序串起教程
+6. Docs(playwright): 📖 `services/playwright/README.md`：sidecar 目录说明 + 三种集成测试运行方式 + 调试技巧
+
 ## [20250803] - 2025.08.03 更新
 
 ### Features
