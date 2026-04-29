@@ -8,7 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Features
 
-1. Feature(playwright-go): 🦫 新增 **Go 版 Playwright sidecar**（`services/playwright-go/`）作为 Python 版的轻量替代，**接口与 Python 版 100% 兼容**，QD 主端只需切换 `PLAYWRIGHT_SIDECAR_URL`：
+1. Feature(fastapi): 🚀 **完整 FastAPI 移植**（Phase 1 + Phase 2，与 Tornado side-by-side 共存）：
+   - **脚手架**（`web/fastapi/`）：`fastapi_app.py` 应用工厂 + 自动 router discovery + 中间件 + 异常处理；`auth.py` Tornado v2 兼容 secure cookie（HMAC-SHA256，hmac.compare_digest，httponly + samesite=lax）；`base.py` `Depends()` 集合（`get_db / get_fetcher / get_current_user / require_user / require_admin / evil / check_permission`）；`templates.py` Jinja2 渲染 helper 注入与 Tornado 一致的 namespace
+   - **18 个 handler 模块** 1:1 移植到 `web/fastapi/handlers/`，覆盖 Tornado 版几乎全部端点：`about` `index` `my` `login` `user_register` `user_passwd` `user_mgmt` `site` `tpl` `push` `task` `task_run` `task_multi` `har_editor` `har_ai` `subscribe` `util_simple` `util_media`
+   - **保留所有安全修复**：`/har/ai_status` 与 `/har/auto_capture_status` 仍要求 auth 且不返回敏感字段；HAR 大小流式上限；AI 错误回显脱敏；ALLOW_HOSTS 默认 RFC 1918 拒绝；`_is_blocked_host` 防御十进制 / 十六进制 / 八进制 IPv4 绕过
+   - **secure cookie 完全兼容**：Tornado 写的 cookie 能被 FastAPI 读，反之亦然，**老用户登录态零迁移**
+   - **新启动器** `run_fastapi.py`：`python run_fastapi.py` 用 uvicorn 启 FastAPI 在端口 8925（环境变量 `FASTAPI_PORT` 可改），与 Tornado 在 8923 并行运行便于灰度
+   - **165+ 个 FastAPI smoke / 集成测试** 全过（含路由完整性、auth 流程、安全字段断言、跨多模块端到端）
+   - 移植由 13 个并行 Sonnet agent 在独立 worktree 完成，每个 agent 自带 5-19 个 case 的测试集
+
+2. Feature(playwright-go): 🦫 新增 **Go 版 Playwright sidecar**（`services/playwright-go/`）作为 Python 版的轻量替代，**接口与 Python 版 100% 兼容**，QD 主端只需切换 `PLAYWRIGHT_SIDECAR_URL`：
    - 镜像 ~250MB（vs Python ~1.5GB），启动快、内存占用低
    - 用 [chromedp](https://github.com/chromedp/chromedp) + headless-shell，自带 HAR 1.2 录制器（监听 CDP `Network.*` 事件拼装）
    - `services/playwright-go/{main,capture,har,security,button_finder}.go` + 35 个 Go 单元测试
