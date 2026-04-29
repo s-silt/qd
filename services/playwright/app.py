@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -54,6 +55,34 @@ HEADLESS = os.getenv("HEADLESS", "true").lower() not in ("0", "false", "no")
 MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "2"))
 DEFAULT_TIMEOUT_MS = int(os.getenv("DEFAULT_TIMEOUT_MS", "60000"))
 ALLOW_HOSTS = [h.strip() for h in os.getenv("ALLOW_HOSTS", "").split(",") if h.strip()]
+# 默认拒绝私有/环回/链路本地地址（SSRF 防护）。设 BLOCK_PRIVATE_IPS=false 可关闭。
+BLOCK_PRIVATE_IPS = os.getenv("BLOCK_PRIVATE_IPS", "true").lower() not in ("0", "false", "no")
+
+
+def _is_blocked_host(hostname: str) -> bool:
+    """返回 True 表示该 hostname 命中默认拒绝名单（私有/环回/链路本地/元数据地址）。
+
+    注意：此函数仅检查字面 IP。DNS 重绑定攻击（将公共域名解析至内网 IP）无法
+    在此层防御，需在 chromedp 请求层面做二次 DNS 解析校验（Phase 2 TODO）。
+    """
+    if not hostname:
+        return True
+    h = hostname.lower()
+    if h in ("localhost", "0.0.0.0"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        # 非字面 IP（普通域名），此层不拦截
+        return False
+    return (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
 
 # 反检测注入: 把 navigator.webdriver 抹掉, 防止简单 bot 检测
 STEALTH_INIT_JS = """
@@ -108,6 +137,12 @@ class CaptureRequest(BaseModel):
             host = u.hostname.lower()
             if not any(host == h or host.endswith("." + h) for h in ALLOW_HOSTS):
                 raise ValueError(f"hostname 不在 ALLOW_HOSTS 白名单内: {host}")
+        elif BLOCK_PRIVATE_IPS:
+            if _is_blocked_host(u.hostname):
+                raise ValueError(
+                    f"hostname {u.hostname!r} 命中默认拒绝名单（私有/环回/链路本地地址），"
+                    "如需访问内网地址请显式设置 ALLOW_HOSTS 或将 BLOCK_PRIVATE_IPS 设为 false"
+                )
         return v
 
 
