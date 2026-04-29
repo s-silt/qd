@@ -430,7 +430,6 @@ class QueueWorker(BaseWorker):
             asyncio.create_task(self.runner(i))
 
         while True:
-            sleep = asyncio.sleep(config.push_batch_delta)
             if self.success or self.failed:
                 logger_worker.info('Last %d seconds, %d task done. %d success, %d failed' ,
                                    config.push_batch_delta, self.success + self.failed, self.success, self.failed)
@@ -438,12 +437,11 @@ class QueueWorker(BaseWorker):
                 self.failed = 0
             if config.push_batch_sw:
                 await self.push_batch()
-            await sleep
+            await asyncio.sleep(config.push_batch_delta)
 
     async def runner(self, id):
         logger_worker.debug('Runner %d started' , id)
         while True:
-            sleep = asyncio.sleep(config.check_task_loop / 1000.0)
             task = await self.queue.get()
             logger_worker.debug(
                 'Runner %d get task: %s, running...' , id, task['id'])
@@ -460,12 +458,11 @@ class QueueWorker(BaseWorker):
                 self.failed += 1
                 self.task_lock[task['id']] = False
             self.queue.task_done()
-            await sleep
+            await asyncio.sleep(config.check_task_loop / 1000.0)
 
     async def producer(self):
         logger_worker.debug('Schedule Producer started')
         while True:
-            sleep = asyncio.sleep(config.check_task_loop / 1000.0)
             try:
                 tasks = await self.db.task.scan()
                 unlock_tasks = 0
@@ -481,7 +478,7 @@ class QueueWorker(BaseWorker):
             except Exception as e:
                 logger_worker.error(
                     'Schedule Producer get tasks failed! %s', e, exc_info=config.traceback_print)
-            await sleep
+            await asyncio.sleep(config.check_task_loop / 1000.0)
 
 # 旧版本批量任务定时执行
 # 建议仅当新版 Queue 生产者消费者定时执行功能失效时使用
