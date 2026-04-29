@@ -76,8 +76,16 @@ class AIClient:
                 async with session.post(url, json=payload, headers=headers) as resp:
                     text = await resp.text()
                     if resp.status >= 400:
+                        # Only expose status code; do NOT echo response body to
+                        # callers — it may contain reflected API keys or internal
+                        # error detail from the upstream provider.
+                        logger_ai.debug(
+                            "AI service error %s, body (first 200): %.200s",
+                            resp.status,
+                            text,
+                        )
                         raise AIClientError(
-                            f"AI 服务返回 {resp.status}: {text[:500]}"
+                            f"AI 服务返回错误状态码 {resp.status}，请检查 AI_API_KEY 及服务配置"
                         )
                     data = json.loads(text)
         except aiohttp.ClientError as e:
@@ -88,7 +96,9 @@ class AIClient:
         try:
             return data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as e:
-            raise AIClientError(f"AI 响应结构不符合预期: {data}") from e
+            # Log detail at debug; surface only generic message to caller
+            logger_ai.debug("AI 响���结构不符合预期: %.500s", str(data))
+            raise AIClientError("AI 响应结构不符合预期，请检查所选模型是否兼容 OpenAI Chat Completions 协议") from e
 
 
 # ---------- HAR 预处理 ---------- #
