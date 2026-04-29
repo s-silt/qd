@@ -1,0 +1,60 @@
+{
+  "appName": {
+    "message": "QD Cookies 获取助手"
+  },
+  "description": {
+    "message": "在已登录的网页上一键导出 cookie 并通过 postMessage 发送给 QD 框架，免去手动复制 cookie。"
+  },
+  "optionsTitle": {
+    "message": "QD Cookies 获取助手 - 设置"
+  },
+  "optionsHostsLabel": {
+    "message": "QD 站点白名单"
+  },
+  "optionsHostsHelp": {
+    "message": "填入运行 QD 框架的站点 URL（每行一个），扩展只在这些站点中向页面注入获取按钮。例：http://192.168.1.10:8923 或 https://qd.example.com"
+  },
+  "optionsSave": {
+    "message": "保存"
+  },
+  "optionsReset": {
+    "message": "重置"
+  },
+  "optionsSaved": {
+    "message": "已保存"
+  },
+  "optionsReseted": {
+    "message": "已重置"
+  },
+  "optionsInvalid": {
+    "message": "存在无效 URL，已忽略：$URL$",
+    "placeholders": {
+      "url": {
+        "content": "$1",
+        "example": "not-a-url"
+      }
+    }
+  },
+  "confirmTitle": {
+    "message": "QD Cookies 获取助手"
+  },
+  "confirmMessage": {
+    "message": "确认从「$SITE$」导出 cookie 并发送给当前页面（$ORIGIN$）？",
+    "placeholders": {
+      "site": {
+        "content": "$1",
+        "example": "https://example.com"
+      },
+      "origin": {
+        "content": "$2",
+        "example": "http://localhost:8923"
+      }
+    }
+  },
+  "errorEmpty": {
+    "message": "未获取到 cookie，请确认你已登录目标站点。"
+  },
+  "errorContext": {
+    "message": "扩展上下文已失效，请刷新页面后再试。"
+  }
+}

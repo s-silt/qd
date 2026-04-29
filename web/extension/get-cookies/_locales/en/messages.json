@@ -1,0 +1,60 @@
+{
+  "appName": {
+    "message": "QD Cookies Helper"
+  },
+  "description": {
+    "message": "One-click export of cookies from a logged-in tab to the QD framework via postMessage, no manual copy needed."
+  },
+  "optionsTitle": {
+    "message": "QD Cookies Helper - Options"
+  },
+  "optionsHostsLabel": {
+    "message": "QD site allowlist"
+  },
+  "optionsHostsHelp": {
+    "message": "URLs of QD instances (one per line). The extension only injects its export button on these origins. e.g. http://192.168.1.10:8923 or https://qd.example.com"
+  },
+  "optionsSave": {
+    "message": "Save"
+  },
+  "optionsReset": {
+    "message": "Reset"
+  },
+  "optionsSaved": {
+    "message": "Saved"
+  },
+  "optionsReseted": {
+    "message": "Reset"
+  },
+  "optionsInvalid": {
+    "message": "Ignored invalid URL(s): $URL$",
+    "placeholders": {
+      "url": {
+        "content": "$1",
+        "example": "not-a-url"
+      }
+    }
+  },
+  "confirmTitle": {
+    "message": "QD Cookies Helper"
+  },
+  "confirmMessage": {
+    "message": "Export cookies from \"$SITE$\" to the current page ($ORIGIN$)?",
+    "placeholders": {
+      "site": {
+        "content": "$1",
+        "example": "https://example.com"
+      },
+      "origin": {
+        "content": "$2",
+        "example": "http://localhost:8923"
+      }
+    }
+  },
+  "errorEmpty": {
+    "message": "No cookies returned. Have you logged into the target site?"
+  },
+  "errorContext": {
+    "message": "Extension context invalidated, please reload the page."
+  }
+}

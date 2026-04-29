@@ -48,7 +48,7 @@ web/
 │   ├── base.py             # Shared FastAPI dependencies
 │   ├── templates.py        # Jinja2 render_template helper
 │   ├── README.md           # This file
-│   └── handlers/           # 18 ported handler modules (Phase 2 complete)
+│   └── handlers/           # 19 ported handler modules (Phase 2 + extension)
 │       ├── __init__.py     # Auto-discovery of APIRouter modules
 │       ├── about.py
 │       ├── har_ai.py
@@ -150,6 +150,7 @@ FASTAPI_PORT=9000 python run_fastapi.py
 | `web/fastapi/handlers/har_ai.py`            | `/har/ai_analyze`, `/har/ai_status`, `/har/auto_capture`, `/har/auto_capture_status` | Done   |
 | `web/fastapi/handlers/util_simple.py`       | `/util/*`                          | Done   |
 | `web/fastapi/handlers/util_media.py`        | `/util/image`, `/util/ocr`         | Done   |
+| `web/fastapi/handlers/get_cookies.py`       | `/get-cookies/`, `/get-cookies/download` | Done   |
 
 ---
 
