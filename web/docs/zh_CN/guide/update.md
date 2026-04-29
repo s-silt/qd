@@ -1,38 +1,53 @@
 # 更新方法
 
-> 操作前请一定要记得备份数据库!!!
+> 操作前请务必备份数据库！
 >
 > 更新后请重启容器或清空浏览器缓存。
 
-## 源码部署更新
+## Docker Compose 部署更新（推荐）
 
-``` sh
-# 先 cd 到源码所在目录, 执行命令后重启进程
-wget https://gitee.com/qd-today/qd/raw/master/update.sh -O ./update.sh && \
-sh ./update.sh
+```bash
+cd qd
+git pull
+docker compose -f docker-compose.local.yml up -d --build
 ```
 
-## Docker Compose 部署更新
+首次构建大约 1-3 分钟；后续更新若无新依赖则走 Docker layer 缓存，几秒内完成。
 
-``` sh
-# 先 cd 到 docker-compose.yml 所在目录, 执行命令后重启容器
-docker compose pull && \
-docker compose up -d
+## 备份与回滚
+
+```bash
+# 更新前备份（5 秒）
+tar -czf qd-backup-$(date +%F).tar.gz config redis/data
+
+# 回滚到指定版本
+git log --oneline -10
+git checkout <commit-sha>
+docker compose -f docker-compose.local.yml up -d --build
 ```
 
-## Docker 容器部署更新
+## Web 框架切换
 
-``` sh
-# 先进入容器后台, 执行命令后重启容器
-# docker exec -it 容器名 /bin/sh
-wget https://gitee.com/qd-today/qd/raw/master/update.sh -O /usr/src/app/update.sh && \
-sh /usr/src/app/update.sh
+自 v20260429 起默认使用 FastAPI（uvicorn）。如需切换回 Tornado：
+
+```yaml
+# docker-compose.local.yml
+environment:
+  - WEB_FRAMEWORK=tornado
 ```
 
-## 强制同步最新源码
+```bash
+docker compose -f docker-compose.local.yml restart qd
+```
 
-``` sh
-# 先 cd 到仓库代码根目录, 执行命令后重启进程
-wget https://gitee.com/qd-today/qd/raw/master/update.sh -O ./update.sh && \
-sh ./update.sh -f
+详见 [Tornado → FastAPI 迁移指南](./migrate-fastapi.md)。
+
+## 与上游同步
+
+```bash
+git remote add upstream https://github.com/qd-today/qd.git
+git fetch upstream
+git merge upstream/master
+git push origin master
+docker compose -f docker-compose.local.yml up -d --build
 ```
