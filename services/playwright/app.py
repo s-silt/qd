@@ -24,6 +24,8 @@ import logging
 import os
 import random
 import re
+import socket
+import struct
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -59,30 +61,73 @@ ALLOW_HOSTS = [h.strip() for h in os.getenv("ALLOW_HOSTS", "").split(",") if h.s
 BLOCK_PRIVATE_IPS = os.getenv("BLOCK_PRIVATE_IPS", "true").lower() not in ("0", "false", "no")
 
 
+def _normalize_ipv4(hostname: str) -> "ipaddress.IPv4Address | None":
+    """尝试将 decimal/hex/octal 形式的 IPv4 字符串规范化为 IPv4Address。
+
+    例如：
+      "2130706433"  -> IPv4Address('127.0.0.1')   (十进制整数)
+      "0x7f000001"  -> IPv4Address('127.0.0.1')   (十六进制)
+      "0177.0.0.1"  -> IPv4Address('127.0.0.1')   (八进制分段)
+
+    浏览器（包括 Chromium）对这些格式的处理与 socket.inet_aton 一致；
+    ipaddress.ip_address() 不接受这些格式，因此需要额外一步归一化。
+    """
+    try:
+        # inet_aton 接受 1–4 段 IPv4，包括十进制整数、0x 十六进制、0 八进制
+        packed = socket.inet_aton(hostname)
+        return ipaddress.IPv4Address(struct.unpack("!I", packed)[0])
+    except (OSError, struct.error):
+        return None
+
+
 def _is_blocked_host(hostname: str) -> bool:
     """返回 True 表示该 hostname 命中默认拒绝名单（私有/环回/链路本地/元数据地址）。
 
-    注意：此函数仅检查字面 IP。DNS 重绑定攻击（将公共域名解析至内网 IP）无法
-    在此层防御，需在 chromedp 请求层面做二次 DNS 解析校验（Phase 2 TODO）。
+    覆盖场景：
+    - "localhost" / "0.0.0.0" 字面量
+    - 标准点分 IPv4（127.0.0.1, 10.x.x.x, 169.254.x.x 等）
+    - 十进制整数 IPv4（2130706433 == 127.0.0.1）
+    - 十六进制 IPv4（0x7f000001）/ 八进制分段（0177.0.0.1）
+    - IPv6（::1, fe80::, fc00:: 等）
+
+    注意：此函数仅检查字面 IP/localhost。DNS 重绑定攻击（将公共域名解析至内网
+    IP）无法在此层防御，需在 chromedp 请求层面做二次 DNS 解析校验（Phase 2 TODO）。
     """
     if not hostname:
         return True
     h = hostname.lower()
     if h in ("localhost", "0.0.0.0"):
         return True
+
+    # 先尝试标准 IPv4/IPv6 解析
     try:
         ip = ipaddress.ip_address(h)
+        return (
+            ip.is_loopback
+            or ip.is_link_local
+            or ip.is_private
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
     except ValueError:
-        # 非字面 IP（普通域名），此层不拦截
-        return False
-    return (
-        ip.is_loopback
-        or ip.is_link_local
-        or ip.is_private
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+        pass
+
+    # 尝试非标准 IPv4 格式（十进制整数 / 十六进制 / 八进制）
+    # 浏览器会将这些形式解析为 IPv4，Python 的 ipaddress 不接受它们
+    norm = _normalize_ipv4(h)
+    if norm is not None:
+        return (
+            norm.is_loopback
+            or norm.is_link_local
+            or norm.is_private
+            or norm.is_multicast
+            or norm.is_reserved
+            or norm.is_unspecified
+        )
+
+    # 普通域名，此层不拦截
+    return False
 
 # 反检测注入: 把 navigator.webdriver 抹掉, 防止简单 bot 检测
 STEALTH_INIT_JS = """
