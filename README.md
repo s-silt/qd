@@ -7,7 +7,7 @@
 <h1 align="center">QD for Python3</h1>
 
 <div align="center">
-QD —— 一个<b>HTTP请求定时任务自动执行框架</b> base on HAR Editor and Tornado Server
+QD [v20260429] —— 一个<b>HTTP请求定时任务自动执行框架</b> base on HAR Editor and Tornado Server
 
 [![HomePage][HomePage-image]][HomePage-url]
 [![Github][Github-image]][Github-url]
