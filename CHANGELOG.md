@@ -6,71 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+(empty — see [20260429] below for the latest tagged changes.)
+
+## [20260429] - 2026.04.29 更新（s-silt fork）
+
 ### Features
 
-1. Feature(extension): 🍪 **QD Cookies 获取助手** Manifest V3 浏览器扩展集成进 `web/extension/get-cookies/`，含 zh_CN/en 双语，与上游 `qd-today/get-cookies` 消息协议兼容；同时在 QD 主端新增 `/get-cookies/` 安装指引页（实时检测扩展是否就绪 + bookmarklet 入口）与 `/get-cookies/download` 即时打包 zip 端点
-   - 安全/质量改进：站点白名单按 `URL.hostname` 精确+后缀匹配（修复 `String.includes` 子串误判）；`postMessage` targetOrigin 改为 `window.location.origin`；改用 `chrome.runtime.onMessage` 一次性消息（替代 long-lived port）；注入仅在 `tab.status==='complete'` 且 `frameIds:[0]` 触发；内容脚本加 `__qdGetCookieInjected` 重入保护；options 默认值清空+保存时 URL 校验；移除 manifest 硬编码 `key`
-
-2. Feature(fastapi): 🚀 **完整 FastAPI 移植**（Phase 1 + Phase 2，与 Tornado side-by-side 共存）：
+1. Feature(fastapi): 🚀 **完整 FastAPI 移植**（Phase 1 + Phase 2，与 Tornado side-by-side 共存，`run.py` 默认启动 FastAPI/uvicorn，`WEB_FRAMEWORK=tornado` 一键回退）：
    - **脚手架**（`web/fastapi/`）：`fastapi_app.py` 应用工厂 + 自动 router discovery + 中间件 + 异常处理；`auth.py` Tornado v2 兼容 secure cookie（HMAC-SHA256，hmac.compare_digest，httponly + samesite=lax）；`base.py` `Depends()` 集合（`get_db / get_fetcher / get_current_user / require_user / require_admin / evil / check_permission`）；`templates.py` Jinja2 渲染 helper 注入与 Tornado 一致的 namespace
-   - **18 个 handler 模块** 1:1 移植到 `web/fastapi/handlers/`，覆盖 Tornado 版几乎全部端点：`about` `index` `my` `login` `user_register` `user_passwd` `user_mgmt` `site` `tpl` `push` `task` `task_run` `task_multi` `har_editor` `har_ai` `subscribe` `util_simple` `util_media`
+   - **19 个 handler 模块** 1:1 移植到 `web/fastapi/handlers/`，覆盖 Tornado 版几乎全部端点：`about` `index` `my` `login` `user_register` `user_passwd` `user_mgmt` `site` `tpl` `push` `task` `task_run` `task_multi` `har_editor` `har_ai` `subscribe` `util_simple` `util_media` `get_cookies`
    - **保留所有安全修复**：`/har/ai_status` 与 `/har/auto_capture_status` 仍要求 auth 且不返回敏感字段；HAR 大小流式上限；AI 错误回显脱敏；ALLOW_HOSTS 默认 RFC 1918 拒绝；`_is_blocked_host` 防御十进制 / 十六进制 / 八进制 IPv4 绕过
    - **secure cookie 完全兼容**：Tornado 写的 cookie 能被 FastAPI 读，反之亦然，**老用户登录态零迁移**
-   - **新启动器** `run_fastapi.py`：`python run_fastapi.py` 用 uvicorn 启 FastAPI 在端口 8925（环境变量 `FASTAPI_PORT` 可改），与 Tornado 在 8923 并行运行便于灰度
+   - **新启动器** `run_fastapi.py`：与默认 `run.py` 等价，便于在 Tornado 仍是默认时单独跑 FastAPI 灰度
    - **165+ 个 FastAPI smoke / 集成测试** 全过（含路由完整性、auth 流程、安全字段断言、跨多模块端到端）
-   - 移植由 13 个并行 Sonnet agent 在独立 worktree 完成，每个 agent 自带 5-19 个 case 的测试集
-
 2. Feature(playwright-go): 🦫 新增 **Go 版 Playwright sidecar**（`services/playwright-go/`）作为 Python 版的轻量替代，**接口与 Python 版 100% 兼容**，QD 主端只需切换 `PLAYWRIGHT_SIDECAR_URL`：
    - 镜像 ~250MB（vs Python ~1.5GB），启动快、内存占用低
    - 用 [chromedp](https://github.com/chromedp/chromedp) + headless-shell，自带 HAR 1.2 录制器（监听 CDP `Network.*` 事件拼装）
    - `services/playwright-go/{main,capture,har,security,button_finder}.go` + 35 个 Go 单元测试
    - `docker-compose.local.yml` / `docker-compose.yml` 加入 `playwright-go` 服务（默认注释，与 Python 版二选一）
    - 已知差异：缺 `timings.{blocked,dns,connect,ssl}` 与 cookie 元数据；不支持 locale/timezone（headless-shell 限制）；网络空闲检测用 DOM ready 替代 networkidle
-
-### Performance
-
-1. Perf(deps): 🚀 SQLAlchemy 升级 `<2.0` → `>=2.0,<3.0`：
-   - 移除 `declarative_base(bind=)`（2.0 已废弃）
-   - 8 个 db 模块的 `select(generator)` 改为 `select(*list)` 可变参数风格
-   - 调用方接口零变化，`worker.py` / handlers 不需要改
-
-### Changed
-
-1. Refactor(libs): ♻️ **拆分 962 行的 `libs/utils.py`** 到 `libs/_utils/` 子包：
-   - `network.py` (198 行, IP 处理)
-   - `crypto.py` (138 行, md5/sha/aes/base64)
-   - `datetime_fmt.py` (115 行, 时间格式化)
-   - `jinja_filters.py` (468 行, jinja_globals + 各种 filter)
-   - `mail.py` (95 行, sendmail)
-   - `misc.py` (42 行, func_cache/method_cache)
-   - `libs/utils.py` 现仅 96 行的 re-export shim, **所有现有 `from libs.utils import xxx` 调用零改动**
-2. Refactor(compose): ♻️ docker-compose 中 `playwright` 服务改名注释为 "Python 版"，与新 `playwright-go` 服务并列展示，便于二选一
-
-### Tests
-
-1. Test(go): ✅ 新增 35 个 Go 单元测试覆盖 `services/playwright-go/` 的 button_finder 打分、storage_state 跨域剔除、cookie 解析等纯逻辑
-
-## [20260429] - 2026.04.29 更新（s-silt fork）
-
-### Features
-
-1. Feature(AI): 🤖 新增 **AI 智能识别签到**：HAR 编辑器右上角加按钮，把抓到的 HAR 一键交给兼容 OpenAI 协议的 LLM（OpenAI / DeepSeek / 通义 / Moonshot / 本地 Ollama 等）自动挑出签到接口，输出最小化 HAR
+3. Feature(extension): 🍪 **QD Cookies 获取助手** Manifest V3 浏览器扩展集成进 `web/extension/get-cookies/`，含 zh_CN/en 双语，与上游 `qd-today/get-cookies` 消息协议兼容；同时在 QD 主端新增 `/get-cookies/` 安装指引页（实时检测扩展是否就绪 + bookmarklet 入口）与 `/get-cookies/download` 即时打包 zip 端点
+   - 安全/质量改进：站点白名单按 `URL.hostname` 精确+后缀匹配（修复 `String.includes` 子串误判）；`postMessage` targetOrigin 改为 `window.location.origin`；改用 `chrome.runtime.onMessage` 一次性消息（替代 long-lived port）；注入仅在 `tab.status==='complete'` 且 `frameIds:[0]` 触发；内容脚本加 `__qdGetCookieInjected` 重入保护；options 默认值清空+保存时 URL 校验；移除 manifest 硬编码 `key`
+4. Feature(AI): 🤖 新增 **AI 智能识别签到**：HAR 编辑器右上角加按钮，把抓到的 HAR 一键交给兼容 OpenAI 协议的 LLM（OpenAI / DeepSeek / 通义 / Moonshot / 本地 Ollama 等）自动挑出签到接口，输出最小化 HAR
    - 后端 `libs/ai_client.py` + `/har/ai_analyze` `/har/ai_status` 端点
    - 前端 `web/static/har/ai_ctrl.js` AngularJS 控制器与编辑器内弹窗
    - 配置：`AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` / `AI_TIMEOUT` / `AI_MAX_HAR_ENTRIES` / `AI_HAR_BODY_TRUNCATE_BYTES` / `AI_HAR_HEADER_TRUNCATE_BYTES`
    - HAR 喂给 AI 前预处理：仅保留必要 header、Cookie 只送名称、body 默认截断 500 字
-2. Feature(AutoCapture): 🪄 新增 **URL 自动抓包**：给 URL + Cookie/storage_state，Playwright sidecar 自动加载页面、启发式找签到按钮、点击并录制 HAR，可串接 AI 直接产模板
+5. Feature(AutoCapture): 🪄 新增 **URL 自动抓包**：给 URL + Cookie/storage_state，Playwright sidecar 自动加载页面、启发式找签到按钮、点击并录制 HAR，可串接 AI 直接产模板
    - 独立容器 `services/playwright`（FastAPI + Chromium，约 1.5GB），通过 docker-compose 部署
    - 启发式 selector 优先级：`data-testid` > `#id` > `[name=]` > nth-of-type（最多 4 层），输出 `quality: stable/medium/fragile` 字段供前端展示
    - 反检测：抹掉 `navigator.webdriver`、随机点击延迟、中文 locale + 中国时区
    - 配置：`PLAYWRIGHT_SIDECAR_URL` / `PLAYWRIGHT_CAPTURE_TIMEOUT` / `PLAYWRIGHT_MAX_HAR_BYTES`
-3. Feature(DB): 💾 `db.tasklog/task/tpl.list` 的 kwargs 现支持 `list/tuple/set` 自动转 SQL `IN`，向后兼容（标量仍走 `=`）
-4. Feature(DB): 💾 `db.tasklog.delete` 支持传 ID 列表执行批量 `DELETE ... WHERE id IN (...)`
+6. Feature(DB): 💾 `db.tasklog/task/tpl.list` 的 kwargs 现支持 `list/tuple/set` 自动转 SQL `IN`，向后兼容（标量仍走 `=`）
+7. Feature(DB): 💾 `db.tasklog.delete` 支持传 ID 列表执行批量 `DELETE ... WHERE id IN (...)`
 
 ### Performance
 
-1. Perf(worker): 🚀 修复 `worker.push_batch` N+1 查询：原实现对每个 task 单独 SELECT tasklog、对每个 tplid 单独 SELECT tpl，复杂度 `O(任务数 × DB 往返)`。重构为按用户聚合后批量查询，复杂度降为 `O(用户数 × DB 往返)`
-2. Perf(worker): 🚀 `worker.clear_log` 由逐条 `DELETE` 改为一次 `DELETE ... WHERE id IN (...)`
+1. Perf(deps): 🚀 SQLAlchemy 升级 `<2.0` → `>=2.0,<3.0`：移除 `declarative_base(bind=)`（2.0 已废弃）；8 个 db 模块的 `select(generator)` 改为 `select(*list)` 可变参数风格；调用方接口零变化，`worker.py` / handlers 不需要改
+2. Perf(worker): 🚀 修复 `worker.push_batch` N+1 查询：原实现对每个 task 单独 SELECT tasklog、对每个 tplid 单独 SELECT tpl，复杂度 `O(任务数 × DB 往返)`。重构为按用户聚合后批量查询，复杂度降为 `O(用户数 × DB 往返)`
+3. Perf(worker): 🚀 `worker.clear_log` 由逐条 `DELETE` 改为一次 `DELETE ... WHERE id IN (...)`
 
 ### Security
 
@@ -86,17 +60,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-1. Refactor(har): ♻️ 提取 `_analyze_har_with_ai` helper，消除 `HARAIAnalyze` 与 `HARAutoCapture` 中 ~30 行的 AI 调用重复
-2. Refactor(ai_client): ♻️ 抽出 `read_capped(stream_iter, max_bytes)` + `HARSizeLimitExceeded` 异常类，让 HAR 大小限流逻辑可单元测试
-3. Refactor(playwright): ♻️ `app.py` 把 `/capture` 路由内联的浏览器流程抽取为 `perform_capture(browser, req, semaphore)` 独立函数，集成测试可直接调用
-4. Refactor(playwright): ♻️ 把 `_parse_cookie_str_to_storage_state` / `_sanitize_storage_state` 移出 `app.py` 到独立 `security.py`，让单元测试无需 fastapi/playwright 即可跑
-5. Refactor(ai_client): ♻️ `parse_ai_response` 改用正则提取 `` ```json...``` `` 围栏，兼容大写 `` ```JSON ``、围栏内多余空白；空输入 / 截不到 `{` 等情况显式抛 `AIClientError`
-6. Refactor(frontend): ♻️ `ai_ctrl.js` / `auto_capture_ctrl.js` 移除 jQuery `.button('loading')` 调用，改用 `$scope.busy` + `ng-disabled`，模态未渲染时也无副作用
+1. Refactor(libs): ♻️ **拆分 962 行的 `libs/utils.py`** 到 `libs/_utils/` 子包：`network.py` (198 行, IP 处理) + `crypto.py` (138 行, md5/sha/aes/base64) + `datetime_fmt.py` (115 行, 时间格式化) + `jinja_filters.py` (468 行, jinja_globals + 各种 filter) + `mail.py` (95 行, sendmail) + `misc.py` (42 行, func_cache/method_cache)；`libs/utils.py` 现仅 96 行的 re-export shim，**所有现有 `from libs.utils import xxx` 调用零改动**
+2. Refactor(compose): ♻️ docker-compose 中 `playwright` 服务改名注释为 "Python 版"，与新 `playwright-go` 服务并列展示，便于二选一
+3. Refactor(har): ♻️ 提取 `_analyze_har_with_ai` helper，消除 `HARAIAnalyze` 与 `HARAutoCapture` 中 ~30 行的 AI 调用重复
+4. Refactor(ai_client): ♻️ 抽出 `read_capped(stream_iter, max_bytes)` + `HARSizeLimitExceeded` 异常类，让 HAR 大小限流逻辑可单元测试
+5. Refactor(playwright): ♻️ `app.py` 把 `/capture` 路由内联的浏览器流程抽取为 `perform_capture(browser, req, semaphore)` 独立函数，集成测试可直接调用
+6. Refactor(playwright): ♻️ 把 `_parse_cookie_str_to_storage_state` / `_sanitize_storage_state` 移出 `app.py` 到独立 `security.py`，让单元测试无需 fastapi/playwright 即可跑
+7. Refactor(ai_client): ♻️ `parse_ai_response` 改用正则提取 ```` ```json...``` ```` 围栏，兼容大写 ```` ```JSON ````、围栏内多余空白；空输入 / 截不到 `{` 等情况显式抛 `AIClientError`
+8. Refactor(frontend): ♻️ `ai_ctrl.js` / `auto_capture_ctrl.js` 移除 jQuery `.button('loading')` 调用，改用 `$scope.busy` + `ng-disabled`，模态未渲染时也无副作用
 
 ### Tests
 
 1. Test(unit): ✅ 新增 `tests/test_ai_client.py` 与 `services/playwright/test_button_finder.py`，共 **44** 个单元测试覆盖 HAR 噪声过滤、Header 裁剪、JSON 容错解析、AI 结果转 HAR、流式 read_capped 边界、按钮启发式打分、storage_state 跨域剔除、JS 脚本静态守卫等
 2. Test(integration): ✅ 新增 `services/playwright/test_integration.py`：9 个端到端用例启动真实 Chromium 与 aiohttp 测试服务器，验证按钮发现 / Cookie 注入 / storage_state 失效 / 跨域剔除 / 候选回退 / wait_after_click HAR 录制等完整抓包流程；缺依赖时整个文件优雅跳过
+3. Test(go): ✅ 新增 35 个 Go 单元测试覆盖 `services/playwright-go/` 的 button_finder 打分、storage_state 跨域剔除、cookie 解析等纯逻辑
 
 ### Docs
 
@@ -104,8 +81,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 2. Docs(zh_CN): 📖 `web/docs/zh_CN/guide/ai-sign-template.md`：启用 AI 功能、操作流程、提示词技巧、Token 成本、安全合规
 3. Docs(zh_CN): 📖 `web/docs/zh_CN/guide/auto-capture.md`：URL 自动抓包架构、Cookie 复制步骤、SSRF 防御、API 参考
 4. Docs(zh_CN): 📖 `web/docs/zh_CN/guide/docker-deploy.md`：fork 专用 Docker 部署完整教程，含 MySQL / Nginx + HTTPS / 备份回滚 / 升级兼容性说明 / 6 个高频 FAQ
-5. Docs(README): 📖 README 用「快速开始」段替换原 `操作说明` / `更新日志`，按部署 → 抓 HAR → AI 生成 → URL 自动抓包顺序串起教程
-6. Docs(playwright): 📖 `services/playwright/README.md`：sidecar 目录说明 + 三种集成测试运行方式 + 调试技巧
+5. Docs(zh_CN): 📖 `web/docs/zh_CN/guide/migrate-fastapi.md`：Tornado → FastAPI 迁移指南（cookie 兼容性、AES_KEY 处理、`WEB_FRAMEWORK=tornado` 一键回退、FAQ）
+6. Docs(README): 📖 README 用「快速开始」段替换原 `操作说明` / `更新日志`，按部署 → 抓 HAR → AI 生成 → URL 自动抓包顺序串起教程
+7. Docs(playwright): 📖 `services/playwright/README.md`：sidecar 目录说明 + 三种集成测试运行方式 + 调试技巧
 
 ## [20250803] - 2025.08.03 更新
 
