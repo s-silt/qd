@@ -264,11 +264,15 @@ class BaseWorker:
         pushsw = json.loads(task['pushsw'])
         async with self.db.transaction() as sql_session:
             user = await self.db.user.get(task['userid'], fields=('id', 'email', 'email_verified', 'nickname', 'logtime'), sql_session=sql_session)
-            userid = user['id']
+            # Guard BEFORE subscripting: db.user.get() returns None when the user
+            # does not exist, so accessing user['id'] before this check would raise
+            # TypeError: 'NoneType' object is not subscriptable.
             if not user:
+                logger_worker.warning('taskid:%d owner userid:%d not found, disabling task.', task['id'], task['userid'])
                 await self.db.tasklog.add(task['id'], False, msg='no such user, disabled.', sql_session=sql_session)
                 await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
                 return False
+            userid = user['id']
 
             tpl = await self.db.tpl.get(task['tplid'], fields=('id', 'userid', 'sitename', 'siteurl', 'tpl', 'interval', 'last_success'), sql_session=sql_session)
             if not tpl:
