@@ -31,7 +31,7 @@
 
 ### 2.2 配置环境变量
 
-在 `docker-compose.yml` 中找到 QD 服务的 `environment` 段，加入：
+在 `docker-compose.local.yml` 中找到 QD 服务的 `environment` 段，取消注释并填入：
 
 ```yaml
 services:
@@ -49,7 +49,7 @@ services:
 ### 2.3 重启生效
 
 ```bash
-docker compose up -d --force-recreate qd
+docker compose -f docker-compose.local.yml up -d --force-recreate qd
 ```
 
 启动日志若不再出现 `[安全] COOKIE_SECRET 未设置...` 等告警即代表 QD 已成功读取你的环境变量。
