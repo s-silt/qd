@@ -9,6 +9,7 @@ Moonshot、本地 Ollama (启用 OpenAI 模式) 等。
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -131,8 +132,18 @@ def _is_noise(entry: Dict[str, Any]) -> bool:
     return False
 
 
-def _slim_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
-    """裁剪单个 HAR entry 仅保留 AI 需要的字段。"""
+def _slim_entry(
+    entry: Dict[str, Any],
+    body_truncate: int = 500,
+    header_truncate: int = 200,
+) -> Dict[str, Any]:
+    """裁剪单个 HAR entry 仅保留 AI 需要的字段。
+
+    Args:
+        entry: HAR entry
+        body_truncate: 单条 body / response 内容超过此字节数会截断
+        header_truncate: 单个 header value 超过此字节数会截断
+    """
     req = entry.get("request", {})
     resp = entry.get("response", {})
     headers = req.get("headers", []) or []
@@ -143,18 +154,20 @@ def _slim_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
         "origin", "authorization", "x-csrf-token",
     }
     slim_headers = [
-        {"name": h.get("name", ""), "value": h.get("value", "")[:200]}
+        {"name": h.get("name", ""), "value": h.get("value", "")[:header_truncate]}
         for h in headers
         if h.get("name", "").lower() in keep_headers
     ]
     post_data = req.get("postData", {}) or {}
     body_text = post_data.get("text", "") or ""
-    if len(body_text) > 500:
-        body_text = body_text[:500] + "...(truncated)"
+    if len(body_text) > body_truncate:
+        body_text = body_text[:body_truncate] + "...(truncated)"
 
     resp_content = (resp.get("content", {}) or {}).get("text", "") or ""
-    if len(resp_content) > 400:
-        resp_content = resp_content[:400] + "...(truncated)"
+    # 响应预览稍紧一点 (token 比例更重)
+    resp_truncate = max(50, body_truncate * 4 // 5)
+    if len(resp_content) > resp_truncate:
+        resp_content = resp_content[:resp_truncate] + "...(truncated)"
 
     return {
         "method": req.get("method", "GET"),
@@ -168,8 +181,20 @@ def _slim_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def preprocess_har(har_data: Dict[str, Any], max_entries: int) -> List[Dict[str, Any]]:
-    """过滤静态资源后裁剪 entries。返回供 LLM 分析的精简列表。"""
+def preprocess_har(
+    har_data: Dict[str, Any],
+    max_entries: int,
+    body_truncate: Optional[int] = None,
+    header_truncate: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """过滤静态资源后裁剪 entries。返回供 LLM 分析的精简列表。
+
+    body_truncate / header_truncate 缺省时读 config; 单测可显式传入。
+    """
+    if body_truncate is None:
+        body_truncate = getattr(config, "ai_har_body_truncate_bytes", 500)
+    if header_truncate is None:
+        header_truncate = getattr(config, "ai_har_header_truncate_bytes", 200)
     entries = (har_data.get("log", {}) or {}).get("entries", []) or []
     filtered = [e for e in entries if not _is_noise(e)]
     # 优先保留 POST/PUT 等修改类请求（签到通常是 POST/GET）
@@ -178,7 +203,10 @@ def preprocess_har(har_data: Dict[str, Any], max_entries: int) -> List[Dict[str,
             0 if e.get("request", {}).get("method", "GET").upper() != "GET" else 1
         )
     )
-    return [_slim_entry(e) for e in filtered[:max_entries]]
+    return [
+        _slim_entry(e, body_truncate=body_truncate, header_truncate=header_truncate)
+        for e in filtered[:max_entries]
+    ]
 
 
 # ---------- Prompt 构造 ---------- #
@@ -233,26 +261,79 @@ def build_messages(
     ]
 
 
+_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)\n?```", re.DOTALL)
+
+
+class HARSizeLimitExceeded(AIClientError):
+    """sidecar 返回 HAR 超过配置上限时抛出。"""
+
+    def __init__(self, limit: int, received: int):
+        super().__init__(
+            f"HAR 大小 {received} 字节超过上限 {limit}，"
+            "请减少抓包页面或调高 PLAYWRIGHT_MAX_HAR_BYTES"
+        )
+        self.limit = limit
+        self.received = received
+
+
+async def read_capped(stream_iter, max_bytes: int) -> bytes:
+    """从 async iter (例如 aiohttp resp.content.iter_chunked) 读取最多 max_bytes 字节。
+
+    Args:
+        stream_iter: async iterator of bytes chunks
+        max_bytes: 最大允许字节数, 超过抛 HARSizeLimitExceeded
+
+    Returns:
+        累积的 bytes
+    """
+    chunks: List[bytes] = []
+    received = 0
+    async for chunk in stream_iter:
+        received += len(chunk)
+        if received > max_bytes:
+            raise HARSizeLimitExceeded(max_bytes, received)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def parse_ai_response(content: str) -> Dict[str, Any]:
-    """容错解析 AI 输出 JSON。"""
+    """容错解析 AI 输出 JSON。
+
+    依次尝试:
+    1. 直接 json.loads (LLM 已严格输出 JSON)
+    2. 提取 ```json ... ``` 围栏内文本
+    3. 兜底: 找首个 { 到末尾 } 的子串
+    """
+    if not content or not content.strip():
+        raise AIClientError("AI 输出为空")
     raw = content.strip()
-    if raw.startswith("```"):
-        # 去掉 ```json ... ``` 包裹
-        raw = raw.strip("`")
-        if raw.lower().startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-        if raw.endswith("```"):
-            raw = raw[:-3].strip()
-    # 兜底：截取首个 { ... } 区段
+
+    # 1. 直接尝试
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. ```json ... ``` 围栏 (兼容 ```/```json/```JSON, 含前后任意空白)
+    m = _FENCE_RE.search(raw)
+    if m:
+        inner = m.group(1).strip()
+        try:
+            return json.loads(inner)
+        except json.JSONDecodeError:
+            pass
+
+    # 3. 兜底: 截首个 { 到末尾 } 区段
     start = raw.find("{")
     end = raw.rfind("}")
     if start >= 0 and end > start:
-        raw = raw[start : end + 1]
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise AIClientError(f"AI 输出不是合法 JSON: {e}; 原文: {content[:300]}") from e
+        try:
+            return json.loads(raw[start : end + 1])
+        except json.JSONDecodeError as e:
+            raise AIClientError(
+                f"AI 输出截取后仍非合法 JSON: {e}; 原文: {content[:300]}"
+            ) from e
+    raise AIClientError(f"AI 输出不含 JSON 对象; 原文: {content[:300]}")
 
 
 def ai_result_to_har(result: Dict[str, Any]) -> Dict[str, Any]:

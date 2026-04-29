@@ -672,24 +672,14 @@ class HARAutoCapture(BaseHandler):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(sidecar_url, json=payload) as resp:
                     # 流式读取并强制大小上限, 避免恶意/异常大 HAR 撑爆 QD 内存
-                    chunks: list[bytes] = []
-                    received = 0
-                    async for chunk in resp.content.iter_chunked(64 * 1024):
-                        received += len(chunk)
-                        if received > max_bytes:
-                            self.set_status(413)
-                            await self.finish(
-                                {
-                                    "ok": False,
-                                    "error": (
-                                        f"sidecar 返回的 HAR 超过 {max_bytes} 字节上限, "
-                                        "请减少抓包页面或调高 PLAYWRIGHT_MAX_HAR_BYTES"
-                                    ),
-                                }
-                            )
-                            return
-                        chunks.append(chunk)
-                    body = b"".join(chunks)
+                    try:
+                        body = await ai_client.read_capped(
+                            resp.content.iter_chunked(64 * 1024), max_bytes
+                        )
+                    except ai_client.HARSizeLimitExceeded as e:
+                        self.set_status(413)
+                        await self.finish({"ok": False, "error": str(e)})
+                        return
                     if resp.status >= 500:
                         logger_web_handler.warning(
                             "Playwright sidecar 5xx %s: %s",

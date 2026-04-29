@@ -11,6 +11,7 @@
       $scope.error = '';
       $scope.result = null;
       $scope.result_text = '';
+      $scope.busy = false;
 
       // 初始查询 AI 状态
       $http.get('/har/ai_status').then(function(res) {
@@ -35,7 +36,6 @@
       }
 
       $scope.run = function() {
-        var btn = $('#ai-analyze .btn-primary');
         var har = collect_har();
         if (!har) {
           $scope.error = '当前没有 HAR 数据，请先上传或编辑 HAR 后再使用';
@@ -44,9 +44,9 @@
         $scope.error = '';
         $scope.result = null;
         $scope.result_text = '正在调用 AI 分析中，请稍候...';
-        btn.button('loading');
+        $scope.busy = true;
         $http.post('/har/ai_analyze', {har: har, hint: $scope.hint || ''}).then(function(res) {
-          btn.button('reset');
+          $scope.busy = false;
           if (!res.data || !res.data.ok) {
             $scope.error = (res.data && res.data.error) || 'AI 分析失败';
             $scope.result_text = '';
@@ -59,7 +59,7 @@
             $scope.result_text = String(res.data.result);
           }
         }, function(res) {
-          btn.button('reset');
+          $scope.busy = false;
           var msg = '请求失败';
           if (res && res.data && res.data.error) {
             msg = res.data.error;
