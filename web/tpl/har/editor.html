@@ -371,7 +371,7 @@
             AI 功能未启用：请管理员设置环境变量 <code>AI_API_KEY</code>（兼容 OpenAI 协议的服务）后重启 QD。
           </div>
           <div class="alert alert-info" ng-if="ai_enabled" role="alert">
-            当前模型：<strong>{{ ai_model }}</strong>。AI 将分析当前 HAR 中的请求，自动挑出签到接口并替换为最小可执行模板。建议在导入完整 HAR 后使用。
+            AI 将分析当前 HAR 中的请求，自动挑出签到接口并替换为最小可执行模板。建议在导入完整 HAR 后使用。
           </div>
           <div class="alert alert-danger" ng-if="error" role="alert">{{ error }}</div>
           <div class="form-horizontal" role="form">
