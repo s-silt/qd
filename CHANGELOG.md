@@ -6,7 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-Nothing right now.
+### Features
+
+1. Feature(playwright-go): 🦫 新增 **Go 版 Playwright sidecar**（`services/playwright-go/`）作为 Python 版的轻量替代，**接口与 Python 版 100% 兼容**，QD 主端只需切换 `PLAYWRIGHT_SIDECAR_URL`：
+   - 镜像 ~250MB（vs Python ~1.5GB），启动快、内存占用低
+   - 用 [chromedp](https://github.com/chromedp/chromedp) + headless-shell，自带 HAR 1.2 录制器（监听 CDP `Network.*` 事件拼装）
+   - `services/playwright-go/{main,capture,har,security,button_finder}.go` + 35 个 Go 单元测试
+   - `docker-compose.local.yml` / `docker-compose.yml` 加入 `playwright-go` 服务（默认注释，与 Python 版二选一）
+   - 已知差异：缺 `timings.{blocked,dns,connect,ssl}` 与 cookie 元数据；不支持 locale/timezone（headless-shell 限制）；网络空闲检测用 DOM ready 替代 networkidle
+
+### Performance
+
+1. Perf(deps): 🚀 SQLAlchemy 升级 `<2.0` → `>=2.0,<3.0`：
+   - 移除 `declarative_base(bind=)`（2.0 已废弃）
+   - 8 个 db 模块的 `select(generator)` 改为 `select(*list)` 可变参数风格
+   - 调用方接口零变化，`worker.py` / handlers 不需要改
+
+### Changed
+
+1. Refactor(libs): ♻️ **拆分 962 行的 `libs/utils.py`** 到 `libs/_utils/` 子包：
+   - `network.py` (198 行, IP 处理)
+   - `crypto.py` (138 行, md5/sha/aes/base64)
+   - `datetime_fmt.py` (115 行, 时间格式化)
+   - `jinja_filters.py` (468 行, jinja_globals + 各种 filter)
+   - `mail.py` (95 行, sendmail)
+   - `misc.py` (42 行, func_cache/method_cache)
+   - `libs/utils.py` 现仅 96 行的 re-export shim, **所有现有 `from libs.utils import xxx` 调用零改动**
+2. Refactor(compose): ♻️ docker-compose 中 `playwright` 服务改名注释为 "Python 版"，与新 `playwright-go` 服务并列展示，便于二选一
+
+### Tests
+
+1. Test(go): ✅ 新增 35 个 Go 单元测试覆盖 `services/playwright-go/` 的 button_finder 打分、storage_state 跨域剔除、cookie 解析等纯逻辑
 
 ## [20260429] - 2026.04.29 更新（s-silt fork）
 
