@@ -190,5 +190,3 @@ alembic.ini
 
 # Claude Code agent worktrees (local agent isolation, do not commit)
 .claude/
-# Extension build output
-/dist/

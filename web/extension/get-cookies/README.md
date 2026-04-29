@@ -8,15 +8,7 @@
 
 ### 方法 A：开发者模式加载（推荐）
 
-下载扩展 zip 任选其一：
-
-- **GitHub Release**（生产推荐）：[releases?q=extension-v](https://github.com/s-silt/qd/releases?q=extension-v)，字节确定性构建并附 sha256 校验
-- **当前 QD 实例**：访问 `https://你的 QD 域名/get-cookies/download`（即时打包，与运行代码同步）
-- **从源码本地构建**：`bash scripts/build-extension.sh`，输出到 `dist/qd-get-cookies-vX.Y.Z.zip`
-
-下载/构建 zip 解压后：
-
-1. 进入 Chrome / Edge / Brave 等 Chromium 系浏览器：
+1. 克隆/下载 QD 仓库后，进入 Chrome / Edge / Brave 等 Chromium 系浏览器：
    - Chrome：`chrome://extensions/`
    - Edge：`edge://extensions/`
 2. 打开右上角的 **开发者模式**
