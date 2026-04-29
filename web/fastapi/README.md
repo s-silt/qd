@@ -53,7 +53,7 @@ web/
 │       ├── about.py
 │       ├── har_ai.py
 │       ├── har_editor.py
-│       ├─�� index.py
+│       ├── index.py
 │       ├── login.py
 │       ├── my.py
 │       ├── push.py
@@ -136,18 +136,18 @@ FASTAPI_PORT=9000 python run_fastapi.py
 | `web/fastapi/handlers/index.py`             | `GET /`                            | Done   |
 | `web/fastapi/handlers/login.py`             | `/login`, `/logout`                | Done   |
 | `web/fastapi/handlers/user_register.py`     | `/register`                        | Done   |
-| `web/fastapi/handlers/user_passwd.py`       | `/user/password`                   | Done   |
-| `web/fastapi/handlers/user_mgmt.py`         | `/user/*` (admin)                  | Done   |
-| `web/fastapi/handlers/my.py`                | `/my`                              | Done   |
-| `web/fastapi/handlers/task.py`              | `/task/*`                          | Done   |
-| `web/fastapi/handlers/task_multi.py`        | `/task/multi/*`                    | Done   |
-| `web/fastapi/handlers/task_run.py`          | `/task/run`                        | Done   |
-| `web/fastapi/handlers/tpl.py`               | `/tpl/*`                           | Done   |
-| `web/fastapi/handlers/subscribe.py`         | `/subscribe/*`                     | Done   |
-| `web/fastapi/handlers/push.py`              | `/push/*`                          | Done   |
-| `web/fastapi/handlers/site.py`              | `/site/*`                          | Done   |
-| `web/fastapi/handlers/har_editor.py`        | `/har/*`                           | Done   |
-| `web/fastapi/handlers/har_ai.py`            | `/har/ai`                          | Done   |
+| `web/fastapi/handlers/user_passwd.py`       | `/password/reset`, `/password/setnew`, `/verify/{code}` | Done   |
+| `web/fastapi/handlers/user_mgmt.py`         | `/user/manage`, `/user/manage/{ban,activate,verify,delete}` (admin) | Done   |
+| `web/fastapi/handlers/my.py`                | `/my/`, `/my/checkupdate`          | Done   |
+| `web/fastapi/handlers/task.py`              | `/task/new`, `/task/{taskid}/{edit,del,var,setgroup}` | Done   |
+| `web/fastapi/handlers/task_multi.py`        | `/task/{userid}/multi`, `/task/{userid}/get_tasksinfo` | Done   |
+| `web/fastapi/handlers/task_run.py`          | `/task/{taskid}/{run,log,settime,disable}`, `/task/{userid}/log/total/{days}` | Done   |
+| `web/fastapi/handlers/tpl.py`               | `/tpl/{id}/{push,var,del,run,group}`, `/tpls/public` | Done   |
+| `web/fastapi/handlers/subscribe.py`         | `/subscribe/{userid}/*`            | Done   |
+| `web/fastapi/handlers/push.py`              | `/pushs`, `/push/{prid}/{action,view}` | Done   |
+| `web/fastapi/handlers/site.py`              | `/site/{userid}/manage`            | Done   |
+| `web/fastapi/handlers/har_editor.py`        | `/har/edit`, `/har/test`, `/har/save`, `/tpl/{id}/edit`, `/tpl/{id}/save` | Done   |
+| `web/fastapi/handlers/har_ai.py`            | `/har/ai_analyze`, `/har/ai_status`, `/har/auto_capture`, `/har/auto_capture_status` | Done   |
 | `web/fastapi/handlers/util_simple.py`       | `/util/*`                          | Done   |
 | `web/fastapi/handlers/util_media.py`        | `/util/image`, `/util/ocr`         | Done   |
 
