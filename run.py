@@ -60,7 +60,110 @@ def _check_default_secrets(logger):
         pass  # pragma: no cover
 
 
-def start_server():
+async def _start_worker_async(db):
+    """在 asyncio 事件循环中启动 worker（供 FastAPI lifespan 调用）。
+
+    QueueWorker 是纯 asyncio 协程，直接用 asyncio.create_task 启动。
+    BatchWorker 原本依赖 tornado.ioloop.PeriodicCallback；在 FastAPI 模式下
+    用等效的 asyncio sleep 循环替代，保持调度逻辑不变。
+    """
+    logger = Log('QD.Run').getlogger()
+    try:
+        if config.worker_method.upper() == 'QUEUE':
+            worker = QueueWorker(db)
+            asyncio.create_task(worker())
+            logger.info("QueueWorker started as asyncio task")
+        elif config.worker_method.upper() == 'BATCH':
+            worker = BatchWorker(db)
+
+            async def _batch_loop():
+                interval_s = config.check_task_loop / 1000.0
+                while True:
+                    worker()
+                    await asyncio.sleep(interval_s)
+
+            asyncio.create_task(_batch_loop())
+            logger.info("BatchWorker started as asyncio periodic task (interval=%sms)",
+                        config.check_task_loop)
+        else:
+            raise RuntimeError('worker_method must be Queue or Batch, please check config!')
+    except Exception as e:
+        logger.exception('worker start error: %s', e)
+        raise
+
+
+def start_server_fastapi():
+    """Start the FastAPI/uvicorn server with integrated worker."""
+    try:
+        import uvicorn
+    except ImportError:  # pragma: no cover
+        print("uvicorn is not installed. Run: pip install 'uvicorn[standard]'", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        from contextlib import asynccontextmanager
+        from db import DB
+        from libs.fetcher import Fetcher
+        from web.fastapi_app import create_app
+    except ImportError as e:  # pragma: no cover
+        print(f"Import error during startup: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    logger = Log('QD.Run').getlogger()
+
+    # Check default secrets (mirrors Tornado behaviour)
+    _check_default_secrets(logger)
+
+    # Determine port: honour -p <port> CLI arg same as Tornado launcher
+    if len(sys.argv) > 2 and sys.argv[1] == '-p' and sys.argv[2].isdigit():
+        port = int(sys.argv[2])
+    else:
+        port = int(os.getenv("FASTAPI_PORT", str(config.port)))
+
+    # Read version
+    version = "Debug"
+    try:
+        _version_path = os.path.join(os.path.dirname(__file__), "version.json")
+        with open(_version_path, "r", encoding="utf-8") as f:
+            version = str(json.load(f).get("version", "Debug"))
+    except Exception as e:
+        logger.warning("Could not read version.json: %s", e)
+
+    logger.info("Initialising DB …")
+    db = DB()
+
+    # Run DB conversion (same as Tornado path)
+    asyncio.run(db_converter.DBconverter(db).convert_new_type(db))
+
+    logger.info("Initialising Fetcher …")
+    fetcher = Fetcher()
+
+    @asynccontextmanager
+    async def lifespan(app):  # noqa: ANN001
+        """FastAPI lifespan: start worker on startup, dispose DB on shutdown."""
+        await _start_worker_async(db)
+        logger.info("FastAPI server ready on %s:%d", config.bind, port)
+        yield
+        # Shutdown: dispose SQLAlchemy engine
+        await engine.dispose()
+        logger.info("FastAPI server shutdown complete.")
+
+    logger.info("Building FastAPI app (version=%s) …", version)
+    app = create_app(db, fetcher, version=version, lifespan=lifespan)
+
+    logger.info("FastAPI server starting on %s:%d", config.bind, port)
+
+    uvicorn.run(
+        app,
+        host=config.bind,
+        port=port,
+        log_level="debug" if config.debug else "info",
+        access_log=False,
+    )
+
+
+def start_server_tornado():
+    """Start the original Tornado HTTP server with worker (legacy launcher)."""
     # init logging
     logger = Log().getlogger()
     logger_qd = Log('QD.Run').getlogger()
@@ -120,11 +223,22 @@ def start_server():
 
         logger_qd.info("Http Server started on %s:%s", config.bind, port)
         io_loop.start()
-    except KeyboardInterrupt :
+    except KeyboardInterrupt:
         logger_qd.info("Http Server is being manually interrupted... ")
         asyncio.run(engine.dispose())
         logger_qd.info("Http Server is ended. ")
 
 
+def main():
+    """Entry point: dispatch to FastAPI or Tornado based on WEB_FRAMEWORK env var."""
+    fw = os.getenv("WEB_FRAMEWORK", "fastapi").lower()
+    if fw == "fastapi":
+        start_server_fastapi()
+    elif fw == "tornado":
+        start_server_tornado()
+    else:
+        raise ValueError(f"Unsupported WEB_FRAMEWORK: {fw!r}. Choose 'fastapi' or 'tornado'.")
+
+
 if __name__ == "__main__":
-    start_server()
+    main()
