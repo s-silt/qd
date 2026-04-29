@@ -9,7 +9,7 @@ import datetime
 import json
 import time
 import traceback
-from typing import Dict
+from typing import Dict, Optional
 
 import tornado.ioloop
 import tornado.log
@@ -192,7 +192,23 @@ class BaseWorker:
         )
 
     @staticmethod
-    def failed_count_to_time(last_failed_count, retry_count=config.task_max_retry_count, retry_interval=None, interval=None):
+    def failed_count_to_time(
+        last_failed_count: int,
+        retry_count: int = config.task_max_retry_count,
+        retry_interval: Optional[int] = None,
+        interval: Optional[int] = None,
+    ) -> Optional[int]:
+        """Return seconds until the next retry, or None if no more retries.
+
+        Args:
+            last_failed_count: how many times this task has failed consecutively.
+            retry_count: maximum allowed retries (-1 = unlimited).
+            retry_interval: fixed retry interval in seconds (overrides back-off table).
+            interval: tpl-level execution interval used to cap the next wait time.
+
+        Returns:
+            Seconds to wait before next attempt, or None if the task should be disabled.
+        """
         next = None
         if last_failed_count < retry_count or retry_count == -1:
             if retry_interval:
