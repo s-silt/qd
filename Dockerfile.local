@@ -1,0 +1,29 @@
+# Dockerfile for s-silt/qd fork
+# 区别于上游 Dockerfile: 不从远程仓库拉取代码,
+# 直接 COPY 当前 fork 工作目录的源码到镜像内。
+# 用法: docker build -f Dockerfile.local -t s-silt/qd:local .
+#       或: docker compose -f docker-compose.local.yml up -d --build
+
+FROM qdtoday/qd:latest
+
+LABEL maintainer="s-silt"
+LABEL org.opencontainers.image.source="https://github.com/s-silt/qd"
+
+WORKDIR /usr/src/app
+
+# 用 fork 源码覆盖镜像内的官方代码
+# .dockerignore 控制哪些文件不进镜像
+COPY . /usr/src/app/
+
+# 如果 fork 修改了 requirements.txt, 同步安装新依赖。
+# 上游镜像已包含: tornado / aiohttp / cryptography / pycurl 等运行时依赖,
+# 这里仅安装可能新增的包, 失败不阻塞构建。
+RUN pip install --no-cache-dir -r requirements.txt --break-system-packages 2>/dev/null || true
+
+ENV PORT=80
+EXPOSE $PORT/tcp
+ENV TZ=CST-8
+
+VOLUME ["/usr/src/app/config"]
+
+CMD ["sh", "-c", "python /usr/src/app/run.py"]

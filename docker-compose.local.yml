@@ -1,0 +1,54 @@
+# docker-compose for s-silt/qd fork
+# 使用本地 fork 源码构建镜像, 而非拉取官方预编译镜像。
+# 用法: docker compose -f docker-compose.local.yml up -d --build
+
+services:
+  qd:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: s-silt/qd:local
+    container_name: qd
+    depends_on:
+      - redis
+    ports:
+      - "8923:80"
+    volumes:
+      - "./config:/usr/src/app/config"
+    environment:
+      # === 基础设置（生产环境务必修改下面三项）===
+      - DOMAIN=
+      - COOKIE_SECRET=please-change-to-a-long-random-string
+      - AES_KEY=please-change-to-a-long-random-string
+
+      # === Redis ===
+      - REDISCLOUD_URL=redis://redis:6379
+
+      # === AI 辅助签到模板生成（兼容 OpenAI 协议）===
+      # 取消注释并填入 API Key 即可启用 HAR 编辑器右上角 "AI 智能识别签到" 按钮
+      # - AI_API_KEY=sk-xxxxxxxxxxxxxxxx
+      # - AI_BASE_URL=https://api.deepseek.com/v1
+      # - AI_MODEL=deepseek-chat
+      # - AI_TIMEOUT=60
+      # - AI_MAX_HAR_ENTRIES=60
+
+      # === 其他常用项（按需启用）===
+      # - QD_DEBUG=False
+      # - MULTI_PROCESS=False
+      # - DB_TYPE=sqlite3
+      # - JAWSDB_MARIA_URL=mysql://user:pass@mysql:3306/qd?auth_plugin=
+      # - WORKER_METHOD=Queue
+      # - QUEUE_NUM=50
+      # - PUSH_BATCH_SW=True
+      # - MAIL_SMTP=
+      # - MAIL_USER=
+      # - MAIL_PASSWORD=
+    restart: unless-stopped
+
+  redis:
+    image: redis:alpine
+    container_name: redis
+    command: ["--loglevel", "warning"]
+    volumes:
+      - ./redis/data:/data:rw
+    restart: unless-stopped
