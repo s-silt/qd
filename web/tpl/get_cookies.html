@@ -40,9 +40,13 @@ table.gc-compat th { background: #f0f0f0; }
   <div class="gc-card">
     <h3>方式 A：浏览器扩展（推荐，可拿 HttpOnly cookie）</h3>
     <ol>
-      <li>下载扩展源码：
-        <a class="btn btn-primary btn-sm" href="/get-cookies/download" download="qd-get-cookies.zip">下载 qd-get-cookies.zip</a>
-        <span style="font-size: 13px; color: #666;">（直接打包自仓库的 <code>web/extension/get-cookies/</code>）</span>
+      <li>下载扩展 zip（任选其一）：
+        <ul>
+          <li><a class="btn btn-primary btn-sm" href="/get-cookies/download" download="qd-get-cookies.zip">从当前 QD 实例下载</a>
+            <span style="font-size: 13px; color: #666;">（即时打包自当前部署的 <code>web/extension/get-cookies/</code>，与你跑的代码完全同步）</span></li>
+          <li><a class="btn btn-default btn-sm" href="https://github.com/s-silt/qd/releases?q=extension-v" target="_blank" rel="noopener">从 GitHub Release 下载</a>
+            <span style="font-size: 13px; color: #666;">（字节确定性构建，附 sha256 校验，建议生产用户用这个）</span></li>
+        </ul>
       </li>
       <li>解压后，打开 Chromium 系浏览器的扩展页（Chrome：<code>chrome://extensions/</code>，Edge：<code>edge://extensions/</code>），开启 <strong>开发者模式</strong>。</li>
       <li>点 <strong>加载已解压的扩展程序</strong>，选择刚解压的目录。</li>

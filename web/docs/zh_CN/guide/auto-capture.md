@@ -82,7 +82,11 @@
 打开 DevTools（`F12`）→ **Application** 选项卡 → 左侧 **Storage → Cookies → 站点 URL**：
 
 - **简单做法**：右键 → "Copy all as cURL"，从 cURL 命令里复制 `Cookie:` 头那一行
-- **干净做法（推荐）**：本仓库已自带 **QD Cookies 获取助手** 浏览器扩展，访问 QD 自身的 `/get-cookies/` 页面下载并按指引安装；安装后在测试面板点「获取」按钮即可一键导入标准格式 cookie（含 HttpOnly），扩展源码在 `web/extension/get-cookies/`
+- **干净做法（推荐）**：本仓库已自带 **QD Cookies 获取助手** 浏览器扩展，安装后在测试面板点「获取」按钮即可一键导入标准格式 cookie（含 HttpOnly）。扩展两个获取渠道任选其一：
+  - 访问当前 QD 实例的 `/get-cookies/` 页面（即时打包，与运行的代码同步）
+  - 从 [GitHub Release `extension-v*`](https://github.com/s-silt/qd/releases?q=extension-v) 下载字节确定性构建（附 sha256 校验，生产推荐）
+
+  扩展源码在 `web/extension/get-cookies/`
 - **零安装做法**：把 `/get-cookies/` 页面提供的 bookmarklet 拖入书签栏，登录目标站点后点一下把可见 cookie 复制到剪贴板（仅可拿非 HttpOnly cookie）
 
 ### 第 3 步：使用 QD 自动抓包
