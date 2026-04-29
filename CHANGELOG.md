@@ -10,7 +10,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 1. Feature(extension): 🍪 **QD Cookies 获取助手** Manifest V3 浏览器扩展集成进 `web/extension/get-cookies/`，含 zh_CN/en 双语，与上游 `qd-today/get-cookies` 消息协议兼容；同时在 QD 主端新增 `/get-cookies/` 安装指引页（实时检测扩展是否就绪 + bookmarklet 入口）与 `/get-cookies/download` 即时打包 zip 端点
    - 安全/质量改进：站点白名单按 `URL.hostname` 精确+后缀匹配（修复 `String.includes` 子串误判）；`postMessage` targetOrigin 改为 `window.location.origin`；改用 `chrome.runtime.onMessage` 一次性消息（替代 long-lived port）；注入仅在 `tab.status==='complete'` 且 `frameIds:[0]` 触发；内容脚本加 `__qdGetCookieInjected` 重入保护；options 默认值清空+保存时 URL 校验；移除 manifest 硬编码 `key`
-   - 发行版构建：`scripts/build-extension.sh` 字节确定性打包（固定 mtime + 排序 + zip flags），`.github/workflows/release-extension.yml` 在推送 `extension-v*` tag 时自动跑脚本并把 zip 附到 GitHub Release
 
 2. Feature(fastapi): 🚀 **完整 FastAPI 移植**（Phase 1 + Phase 2，与 Tornado side-by-side 共存）：
    - **脚手架**（`web/fastapi/`）：`fastapi_app.py` 应用工厂 + 自动 router discovery + 中间件 + 异常处理；`auth.py` Tornado v2 兼容 secure cookie（HMAC-SHA256，hmac.compare_digest，httponly + samesite=lax）；`base.py` `Depends()` 集合（`get_db / get_fetcher / get_current_user / require_user / require_admin / evil / check_permission`）；`templates.py` Jinja2 渲染 helper 注入与 Tornado 一致的 namespace
