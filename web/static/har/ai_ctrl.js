@@ -6,7 +6,6 @@
     var utils = require('/static/components/utils');
     return angular.module('ai_ctrl', []).controller('AIAnalyzeCtrl', function($scope, $rootScope, $http) {
       $scope.ai_enabled = false;
-      $scope.ai_model = '';
       $scope.hint = '';
       $scope.error = '';
       $scope.result = null;
@@ -16,7 +15,6 @@
       // 初始查询 AI 状态
       $http.get('/har/ai_status').then(function(res) {
         $scope.ai_enabled = !!(res.data && res.data.enabled);
-        $scope.ai_model = (res.data && res.data.model) || '';
       }, function() {
         $scope.ai_enabled = false;
       });

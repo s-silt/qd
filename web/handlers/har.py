@@ -611,14 +611,11 @@ class HARAIAnalyze(BaseHandler):
 class HARAIStatus(BaseHandler):
     """供前端查询 AI 功能是否可用。"""
 
+    @tornado.web.authenticated
     async def get(self) -> None:
         client = ai_client.AIClient()
-        await self.finish(
-            {
-                "enabled": client.enabled,
-                "model": client.model if client.enabled else "",
-            }
-        )
+        # 只返回 enabled 布尔，不暴露 model 名称（防止后端服务商指纹泄露）
+        await self.finish({"enabled": client.enabled})
 
 
 class HARAutoCapture(BaseHandler):
