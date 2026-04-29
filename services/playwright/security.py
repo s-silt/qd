@@ -45,10 +45,25 @@ def parse_cookie_str_to_storage_state(cookie_str: str, url: str) -> Dict[str, An
 
 
 def domain_matches(cookie_domain: str, request_host: str) -> bool:
-    """cookie domain 是否属于 request URL host (含父域)。"""
+    """cookie domain 是否属于 request URL host (含父域)。
+
+    安全说明
+    --------
+    * ``cookie_domain`` 为空字符串、None 或仅由 '.' 组成时直接返回 False，
+      防止空 domain 绕过剔除逻辑。
+    * 匹配采用严格后缀规则（rh == cd 或 rh.endswith("." + cd)），
+      杜绝 evil.com 匹配 notevil.com 的前缀注入攻击。
+    """
     if not cookie_domain or not request_host:
         return False
+    # Coerce non-str types (e.g. None stored as JSON null already handled above,
+    # but guard against any stray non-string value coming from user-supplied JSON)
+    if not isinstance(cookie_domain, str) or not isinstance(request_host, str):
+        return False
     cd = cookie_domain.lstrip(".").lower()
+    if not cd:
+        # domain was purely dots — reject
+        return False
     rh = request_host.lower()
     return rh == cd or rh.endswith("." + cd)
 
