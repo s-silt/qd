@@ -1,0 +1,28 @@
+name: "Check Encoding"
+
+on:
+  push:
+    branches: [ master, dev ]
+  pull_request:
+    branches: [ master, dev ]
+
+jobs:
+  check-encoding:
+    name: Lint encoding anomalies (U+FFFD / invisible chars)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run encoding check
+        run: |
+          chmod +x scripts/check-encoding.sh
+          bash scripts/check-encoding.sh
