@@ -351,6 +351,9 @@ playwright_sidecar_url = os.getenv("PLAYWRIGHT_SIDECAR_URL", "")
 playwright_capture_timeout = int(
     os.getenv("PLAYWRIGHT_CAPTURE_TIMEOUT", "120")
 )  # 调用 sidecar 的总超时(秒), 含浏览器启动 + 加载 + 点击 + HAR 序列化
+playwright_max_har_bytes = int(
+    os.getenv("PLAYWRIGHT_MAX_HAR_BYTES", str(50 * 1024 * 1024))
+)  # sidecar 返回 HAR 的最大字节数 (默认 50MB), 防止恶意/异常大 HAR 撑爆 QD 进程内存
 
 try:
     from local_config import *  # 修改 `local_config.py` 文件的内容不受通过 Git 更新源码的影响

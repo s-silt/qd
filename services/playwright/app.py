@@ -39,6 +39,10 @@ from playwright.async_api import (
 from pydantic import BaseModel, Field, field_validator
 
 from button_finder import JS_FIND_CANDIDATES, pick_button
+from security import (
+    parse_cookie_str_to_storage_state as _parse_cookie_str_to_storage_state,
+    sanitize_storage_state as _sanitize_storage_state,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -127,6 +131,11 @@ async def lifespan(_app: FastAPI):
     global _browser, _playwright_ctx, _semaphore
     _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
     logger.info("Starting Playwright (headless=%s, concurrent=%d)", HEADLESS, MAX_CONCURRENT)
+    if not ALLOW_HOSTS:
+        logger.warning(
+            "[security] ALLOW_HOSTS 未设置, sidecar 将接受任意 hostname。"
+            " 部署到生产环境时请设置 ALLOW_HOSTS=example.com,foo.com 防 SSRF。"
+        )
     _playwright_ctx = await async_playwright().start()
     _browser = await _playwright_ctx.chromium.launch(
         headless=HEADLESS,
@@ -156,34 +165,6 @@ async def health():
         "max_concurrent": MAX_CONCURRENT,
         "browser_ready": _browser is not None and _browser.is_connected(),
     }
-
-
-def _parse_cookie_str_to_storage_state(cookie_str: str, url: str) -> Dict[str, Any]:
-    """把简单 'k1=v1; k2=v2' 转换为 Playwright storage_state cookies 列表。"""
-    parsed = urlparse(url)
-    domain = parsed.hostname or ""
-    cookies = []
-    for part in cookie_str.split(";"):
-        part = part.strip()
-        if not part or "=" not in part:
-            continue
-        name, _, value = part.partition("=")
-        name = name.strip()
-        value = value.strip()
-        if not name:
-            continue
-        cookies.append(
-            {
-                "name": name,
-                "value": value,
-                "domain": "." + domain if not domain.startswith(".") else domain,
-                "path": "/",
-                "httpOnly": False,
-                "secure": parsed.scheme == "https",
-                "sameSite": "Lax",
-            }
-        )
-    return {"cookies": cookies, "origins": []}
 
 
 async def _find_and_click(page, hint: str, actions: List[Dict[str, Any]]):
@@ -220,6 +201,9 @@ async def capture(req: CaptureRequest) -> CaptureResponse:
     storage_state = req.storage_state
     if not storage_state and req.cookies:
         storage_state = _parse_cookie_str_to_storage_state(req.cookies, req.url)
+    # 安全: 剔除与请求 URL host 不匹配的跨域 cookie / origin
+    if storage_state:
+        storage_state = _sanitize_storage_state(storage_state, req.url)
 
     # 写到临时文件: Playwright 接受 storage_state=path 或 dict
     har_fd, har_path = tempfile.mkstemp(suffix=".har", prefix="qd_capture_")
