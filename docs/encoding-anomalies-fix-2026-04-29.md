@@ -6,7 +6,7 @@
 |------|---|
 | 发现日期 | 2026-04-29 |
 | 修复提交分支 | `claude/fix-encoding-anomalies` |
-| 修复 U+FFFD | 42 处（跨 2 个文件） |
+| 修复 U+FFFD | 49 处（跨 2 个文件：1 处在 ai_client.py，48 处在 security-audit 报告） |
 | 修复 U+200B | 0 处（上游历史遗留，不在本次修复范围） |
 | 预防机制 | pre-commit hook + GitHub Actions CI |
 
@@ -22,9 +22,9 @@
 | 行号 | 100 |
 | 原文 | `"AI 响���结构不符合预期: %.500s"` |
 | 修复 | `"AI 响应结构不符合预期: %.500s"` |
-| 推断原字符 | `应`（U+5E94，GBK 字节 `D3 A6`，被截断为 U+FFFD） |
+| 推断原字符 | `应`（U+5E94，UTF-8 字节 `E5 BA 94`，3 字节均被替换为 U+FFFD） |
 
-### 1.2 `docs/security-audit-2026-04-29.md` — 41 处 U+FFFD（35 行）
+### 1.2 `docs/security-audit-2026-04-29.md` — 48 处 U+FFFD（35 行）
 
 | 行号 | 原文（含 FFFD） | 修复为 | 原字符推断 |
 |------|----------------|--------|-----------|
@@ -246,5 +246,5 @@ with open('/tmp/tmp_test.md', 'w') as f:
 bash scripts/check-encoding.sh /tmp/tmp_test.md  # 应输出 issue 并 exit 1
 
 # 3. 现有测试套件
-python -m pytest tests/ -q  # 134 passed（8 pre-existing failures 与本次无关）
+python -m pytest tests/ -q  # 204 passed（8 pre-existing failures 与本次无关，3 skipped）
 ```
