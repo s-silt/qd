@@ -64,12 +64,13 @@ QD [v20260429] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 快速开始
 ==========
 
-本 fork 在原版基础上新增了 **AI 智能识别签到**、**URL 自动抓包（Playwright）** 等能力，并优化了 worker 性能、修复了若干安全问题。建议按以下顺序阅读：
+本 fork 在原版基础上新增了 **AI 智能识别签到**、**URL 自动抓包（Playwright）** 等能力，并把 Web 层从 Tornado 平滑迁移到 FastAPI，优化了 worker 性能，修复了若干安全问题。建议按以下顺序阅读：
 
-1. **[Docker 部署教程](./web/docs/zh_CN/guide/docker-deploy.md)** —— 从零开始用 Docker 部署本 fork（含 MySQL、Nginx + HTTPS、备份回滚、常见问题）
-2. **[HAR 抓包教程](./web/docs/zh_CN/guide/har-capture.md)** —— 浏览器（Chrome/Edge/Firefox/Safari）、桌面工具（Fiddler/Charles/mitmproxy）、移动端（Android/iOS）抓 HAR 完整指南
-3. **[AI 自动生成签到模板](./web/docs/zh_CN/guide/ai-sign-template.md)** —— 把抓到的 HAR 一键交给 AI（DeepSeek / OpenAI / 通义 / 本地 Ollama）自动识别签到接口，生成 QD 模板
-4. **[URL 自动抓包](./web/docs/zh_CN/guide/auto-capture.md)** —— 给 URL + Cookie，QD 自动用 Playwright 加载页面、找签到按钮、录制 HAR 并交给 AI 生成模板，一气呵成
+1. **[从老版本升级 / 迁移到 FastAPI](./web/docs/zh_CN/guide/migrate-fastapi.md)** —— 已有部署的用户先看这份；含 cookie / AES 密钥兼容性、回退方法、常见问题
+2. **[Docker 部署教程](./web/docs/zh_CN/guide/docker-deploy.md)** —— 从零开始用 Docker 部署本 fork（含 MySQL、Nginx + HTTPS、备份回滚、常见问题）
+3. **[HAR 抓包教程](./web/docs/zh_CN/guide/har-capture.md)** —— 浏览器（Chrome/Edge/Firefox/Safari）、桌面工具（Fiddler/Charles/mitmproxy）、移动端（Android/iOS）抓 HAR 完整指南
+4. **[AI 自动生成签到模板](./web/docs/zh_CN/guide/ai-sign-template.md)** —— 把抓到的 HAR 一键交给 AI（DeepSeek / OpenAI / 通义 / 本地 Ollama）自动识别签到接口，生成 QD 模板
+5. **[URL 自动抓包](./web/docs/zh_CN/guide/auto-capture.md)** —— 给 URL + Cookie，QD 自动用 Playwright 加载页面、找签到按钮、录制 HAR 并交给 AI 生成模板，一气呵成
 
 > 上游官方使用指南：<https://qd-today.github.io/qd/zh_CN/>
 > 历史变更详见 **[CHANGELOG.md](./CHANGELOG.md)**
