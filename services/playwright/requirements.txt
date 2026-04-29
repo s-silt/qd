@@ -1,0 +1,4 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+# playwright 已在基础镜像内预装 v1.49.0, 这里不再 pip install 避免冲突
