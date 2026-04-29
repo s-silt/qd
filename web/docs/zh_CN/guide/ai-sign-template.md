@@ -99,7 +99,7 @@ curl http://your-qd-host:8923/har/ai_status
 ### 第 4 步：补充变量并测试
 
 1. 编辑器右侧是变量面板，AI 一般会建议 `cookie` 等变量。点 **测试**。
-2. 在测试弹窗里填入 `cookie`（可点 `点击获取` 借助 Get-Cookies 浏览器插件），其他变量按需填写。
+2. 在测试弹窗里填入 `cookie`（如已安装 [qd-today/get-cookies](https://github.com/qd-today/get-cookies) 浏览器扩展，可点击"获取"按钮一键导入；扩展需单独安装，不随 QD 仓库分发），其他变量按需填写。
 3. 点击 **测试**，看响应是否包含「签到成功」「已签到」等关键字。
 4. 测试通过后，回到编辑器点 **保存**。
 
