@@ -1,0 +1,129 @@
+/* ==========================================================
+   QD Framework — Flat Dark Theme
+   theme-flat-dark.css  v1.0.0  (2026-04-29)
+
+   Import AFTER theme-flat.css to activate dark mode.
+   Uses @media (prefers-color-scheme: dark) so it activates
+   automatically with system preference.
+
+   Or add class="dark" to <html> and use the overrides below.
+   ========================================================== */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Brand — keep green, slightly lighter for dark bg */
+    --color-primary:        #2ecc71;
+    --color-primary-light:  #58d68d;
+    --color-primary-dark:   #27ae60;
+    --color-primary-subtle: rgba(46,204,113,0.08);
+
+    /* Neutral greys — dark scale */
+    --color-grey-50:  #1a1f28;
+    --color-grey-100: #212731;
+    --color-grey-200: #2c3341;
+    --color-grey-400: #5a6474;
+    --color-grey-600: #8891a0;
+    --color-grey-800: #c8cdd6;
+    --color-grey-900: #e8ecf0;
+
+    /* Semantic — darker backgrounds */
+    --color-success-bg:     rgba(39,174,96,0.12);
+    --color-success-border: rgba(39,174,96,0.30);
+
+    --color-warning-bg:     rgba(243,156,18,0.12);
+    --color-warning-border: rgba(243,156,18,0.30);
+
+    --color-danger-bg:      rgba(231,76,60,0.12);
+    --color-danger-border:  rgba(231,76,60,0.30);
+
+    --color-info-bg:        rgba(41,128,185,0.12);
+    --color-info-border:    rgba(41,128,185,0.30);
+
+    /* Text */
+    --text-primary:   #e2e6ea;
+    --text-secondary: #9aa3ae;
+    --text-muted:     #5a6474;
+
+    /* Background */
+    --bg-page:    #151920;
+    --bg-surface: #1d2330;
+    --bg-subtle:  #252c3a;
+
+    /* Border */
+    --border-color: #2c3341;
+
+    /* Shadow — more visible on dark */
+    --shadow-sm:  0 1px 3px rgba(0,0,0,0.30);
+    --shadow-md:  0 2px 8px rgba(0,0,0,0.35);
+    --shadow-lg:  0 4px 16px rgba(0,0,0,0.40);
+  }
+}
+
+/* Optional: .dark class override (manual dark mode toggle) */
+html.dark {
+  --color-primary:        #2ecc71;
+  --color-primary-light:  #58d68d;
+  --color-primary-dark:   #27ae60;
+  --color-primary-subtle: rgba(46,204,113,0.08);
+
+  --color-grey-50:  #1a1f28;
+  --color-grey-100: #212731;
+  --color-grey-200: #2c3341;
+  --color-grey-400: #5a6474;
+  --color-grey-600: #8891a0;
+  --color-grey-800: #c8cdd6;
+  --color-grey-900: #e8ecf0;
+
+  --color-success-bg:     rgba(39,174,96,0.12);
+  --color-success-border: rgba(39,174,96,0.30);
+  --color-warning-bg:     rgba(243,156,18,0.12);
+  --color-warning-border: rgba(243,156,18,0.30);
+  --color-danger-bg:      rgba(231,76,60,0.12);
+  --color-danger-border:  rgba(231,76,60,0.30);
+  --color-info-bg:        rgba(41,128,185,0.12);
+  --color-info-border:    rgba(41,128,185,0.30);
+
+  --text-primary:   #e2e6ea;
+  --text-secondary: #9aa3ae;
+  --text-muted:     #5a6474;
+
+  --bg-page:    #151920;
+  --bg-surface: #1d2330;
+  --bg-subtle:  #252c3a;
+
+  --border-color: #2c3341;
+
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.30);
+  --shadow-md:  0 2px 8px rgba(0,0,0,0.35);
+  --shadow-lg:  0 4px 16px rgba(0,0,0,0.40);
+}
+
+/* Auth page gradient overrides for dark */
+@media (prefers-color-scheme: dark) {
+  .qd-auth {
+    background: linear-gradient(135deg, rgba(46,204,113,0.05) 0%, #151920 100%);
+  }
+}
+html.dark .qd-auth {
+  background: linear-gradient(135deg, rgba(46,204,113,0.05) 0%, #151920 100%);
+}
+
+/* Dark mode toggle button */
+.qd-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  font-size: 16px;
+}
+.qd-theme-toggle:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
