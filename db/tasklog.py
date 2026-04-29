@@ -40,11 +40,11 @@ class Tasklog(BaseDB, AlchemyMixin):
 
     async def list(self, fields=None, limit=1000, to_dict=True, sql_session=None, **kwargs):
         if fields is None:
-            _fields = Tasklog
+            _fields = [Tasklog]
         else:
-            _fields = (getattr(Tasklog, field) for field in fields)
+            _fields = [getattr(Tasklog, field) for field in fields]
 
-        smtm = select(_fields)
+        smtm = select(*_fields)
 
         for key, value in kwargs.items():
             col = getattr(Tasklog, key)

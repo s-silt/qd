@@ -37,11 +37,11 @@ class Notepad(BaseDB, AlchemyMixin):
         assert notepadid, 'need notepadid'
 
         if fields is None:
-            _fields = Notepad
+            _fields = [Notepad]
         else:
-            _fields = (getattr(Notepad, field) for field in fields)
+            _fields = [getattr(Notepad, field) for field in fields]
 
-        smtm = select(_fields).where(Notepad.userid == userid).where(Notepad.notepadid == notepadid)
+        smtm = select(*_fields).where(Notepad.userid == userid).where(Notepad.notepadid == notepadid)
 
         result = await self._get(smtm, one_or_none=one_or_none, first=first, sql_session=sql_session)
         if to_dict and result is not None:
@@ -50,11 +50,11 @@ class Notepad(BaseDB, AlchemyMixin):
 
     async def list(self, fields=None, limit=1000, to_dict=True, sql_session=None, **kwargs):
         if fields is None:
-            _fields = Notepad
+            _fields = [Notepad]
         else:
-            _fields = (getattr(Notepad, field) for field in fields)
+            _fields = [getattr(Notepad, field) for field in fields]
 
-        smtm = select(_fields)
+        smtm = select(*_fields)
 
         for key, value in kwargs.items():
             smtm = smtm.where(getattr(Notepad, key) == value)

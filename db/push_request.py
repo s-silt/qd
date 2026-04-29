@@ -66,11 +66,11 @@ class PushRequest(BaseDB, AlchemyMixin):
     async def get(self, id, fields=None, one_or_none=False, first=True, to_dict=True, sql_session=None):
         assert id, 'need id'
         if fields is None:
-            _fields = PushRequest
+            _fields = [PushRequest]
         else:
-            _fields = (getattr(PushRequest, field) for field in fields)
+            _fields = [getattr(PushRequest, field) for field in fields]
 
-        smtm = select(_fields).where(PushRequest.id == id)
+        smtm = select(*_fields).where(PushRequest.id == id)
 
         result = await self._get(smtm, one_or_none=one_or_none, first=first, sql_session=sql_session)
         if to_dict and result is not None:
@@ -79,11 +79,11 @@ class PushRequest(BaseDB, AlchemyMixin):
 
     async def list(self, fields=None, limit=1000, to_dict=True, sql_session=None, **kwargs):
         if fields is None:
-            _fields = PushRequest
+            _fields = [PushRequest]
         else:
-            _fields = (getattr(PushRequest, field) for field in fields)
+            _fields = [getattr(PushRequest, field) for field in fields]
 
-        smtm = select(_fields)
+        smtm = select(*_fields)
 
         for key, value in kwargs.items():
             smtm = smtm.where(getattr(PushRequest, key) == value)
