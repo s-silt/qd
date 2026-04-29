@@ -39,6 +39,11 @@ EXCLUDE_PATTERNS=(
     '.pytest_cache/'
     # 本身就以展示损坏字符为目的的文档
     'docs/encoding-anomalies-fix-2026-04-29.md'
+    # lint script 自己 - CHECKS 列表必须包含字面字符用于检测
+    'scripts/check-encoding.sh'
+    # 上游 allcontributors[bot] 引入的 U+200B 历史遗留, 不在我们维护范围
+    'web/docs/guide/how-to-use.md'
+    'web/docs/zh_CN/guide/how-to-use.md'
 )
 
 # ---- 排除文件名后缀 ----
