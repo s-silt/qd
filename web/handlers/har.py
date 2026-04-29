@@ -747,13 +747,10 @@ class HARAutoCapture(BaseHandler):
 class HARAutoCaptureStatus(BaseHandler):
     """前端查询自动抓包功能是否可用。"""
 
+    @tornado.web.authenticated
     async def get(self) -> None:
-        await self.finish(
-            {
-                "enabled": bool(config.playwright_sidecar_url),
-                "sidecar_url": config.playwright_sidecar_url or "",
-            }
-        )
+        # 只返回 enabled 布尔，不暴露 sidecar_url（防止内网拓扑泄露）
+        await self.finish({"enabled": bool(config.playwright_sidecar_url)})
 
 
 handlers = [
