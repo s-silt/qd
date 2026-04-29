@@ -333,7 +333,8 @@
             <p ng-if="result.ai">
               AI 识别站点：<code>{{ result.ai.result.sitename }}</code> · 关键请求 {{ result.ai.har.log.entries.length }} 条
             </p>
-            <p ng-if="result.ai_error" class="text-danger">AI 后处理失败：{{ result.ai_error }}</p>
+            <p ng-if="result.ai_skipped" class="text-warning">AI 已跳过：{{ result.ai_skipped }}（将应用原始 HAR）</p>
+            <p ng-if="result.ai_error" class="text-danger">AI 后处理失败：{{ result.ai_error }}（将应用原始 HAR）</p>
           </div>
           <div ng-if="candidates && candidates.length">
             <hr>

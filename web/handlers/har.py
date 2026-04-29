@@ -521,6 +521,27 @@ class HARSave(BaseHandler):
         await self.finish({"id": id})
 
 
+async def _analyze_har_with_ai(har: dict, hint: str) -> dict:
+    """将 HAR 经预处理后送给 LLM, 返回 {result, har, stats}。
+
+    抛出 ai_client.AIClientError; 调用方负责捕获并友好显示。
+    """
+    client = ai_client.AIClient()
+    if not client.enabled:
+        raise ai_client.AIClientError("AI_API_KEY 未配置")
+    slim = ai_client.preprocess_har(har, config.ai_max_har_entries)
+    if not slim:
+        raise ai_client.AIClientError("HAR 中未找到可分析的请求（可能均被过滤）")
+    messages = ai_client.build_messages(slim, hint=hint)
+    content = await client.chat(messages, temperature=0.1)
+    result = ai_client.parse_ai_response(content)
+    return {
+        "result": result,
+        "har": ai_client.ai_result_to_har(result),
+        "stats": {"input_entries": len(slim)},
+    }
+
+
 class HARAIAnalyze(BaseHandler):
     """根据用户提供的 HAR 抓包数据，调用 AI 提取签到请求并返回最小化 HAR。
 
@@ -563,17 +584,7 @@ class HARAIAnalyze(BaseHandler):
             return
 
         try:
-            slim = ai_client.preprocess_har(har, config.ai_max_har_entries)
-            if not slim:
-                self.set_status(400)
-                await self.finish(
-                    {"ok": False, "error": "HAR 中未找到可分析的请求（可能均被过滤）"}
-                )
-                return
-            messages = ai_client.build_messages(slim, hint=hint)
-            content = await client.chat(messages, temperature=0.1)
-            result = ai_client.parse_ai_response(content)
-            har_out = ai_client.ai_result_to_har(result)
+            ai_out = await _analyze_har_with_ai(har, hint)
         except ai_client.AIClientError as e:
             logger_web_handler.warning("AI 分析失败: %s", e)
             self.set_status(502)
@@ -590,9 +601,9 @@ class HARAIAnalyze(BaseHandler):
         await self.finish(
             {
                 "ok": True,
-                "har": har_out,
-                "result": result,
-                "stats": {"input_entries": len(slim)},
+                "har": ai_out["har"],
+                "result": ai_out["result"],
+                "stats": ai_out["stats"],
             }
         )
 
@@ -656,24 +667,48 @@ class HARAutoCapture(BaseHandler):
         import aiohttp
 
         timeout = aiohttp.ClientTimeout(total=config.playwright_capture_timeout)
+        max_bytes = config.playwright_max_har_bytes
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(sidecar_url, json=payload) as resp:
-                    text = await resp.text()
+                    # 流式读取并强制大小上限, 避免恶意/异常大 HAR 撑爆 QD 内存
+                    chunks: list[bytes] = []
+                    received = 0
+                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                        received += len(chunk)
+                        if received > max_bytes:
+                            self.set_status(413)
+                            await self.finish(
+                                {
+                                    "ok": False,
+                                    "error": (
+                                        f"sidecar 返回的 HAR 超过 {max_bytes} 字节上限, "
+                                        "请减少抓包页面或调高 PLAYWRIGHT_MAX_HAR_BYTES"
+                                    ),
+                                }
+                            )
+                            return
+                        chunks.append(chunk)
+                    body = b"".join(chunks)
                     if resp.status >= 500:
                         logger_web_handler.warning(
-                            "Playwright sidecar 5xx %s: %s", resp.status, text[:300]
+                            "Playwright sidecar 5xx %s: %s",
+                            resp.status,
+                            body[:300].decode("utf-8", "replace"),
                         )
                         self.set_status(502)
                         await self.finish(
                             {
                                 "ok": False,
-                                "error": f"sidecar 内部错误 {resp.status}: {text[:300]}",
+                                "error": (
+                                    f"sidecar 内部错误 {resp.status}: "
+                                    + body[:300].decode("utf-8", "replace")
+                                ),
                             }
                         )
                         return
                     try:
-                        result = json.loads(text)
+                        result = json.loads(body)
                     except json.JSONDecodeError as e:
                         self.set_status(502)
                         await self.finish(
@@ -702,28 +737,14 @@ class HARAutoCapture(BaseHandler):
             await self.finish(result)
             return
 
-        har = result.get("har") or {}
         try:
-            client = ai_client.AIClient()
-            if not client.enabled:
-                result["ai_skipped"] = "AI_API_KEY 未配置, 仅返回原始 HAR"
-                await self.finish(result)
-                return
-            slim = ai_client.preprocess_har(har, config.ai_max_har_entries)
-            if not slim:
-                result["ai_skipped"] = "HAR 中无可分析请求"
-                await self.finish(result)
-                return
-            messages = ai_client.build_messages(slim, hint=payload.get("hint", ""))
-            content = await client.chat(messages, temperature=0.1)
-            ai_result = ai_client.parse_ai_response(content)
-            result["ai"] = {
-                "result": ai_result,
-                "har": ai_client.ai_result_to_har(ai_result),
-                "stats": {"input_entries": len(slim)},
-            }
+            ai_out = await _analyze_har_with_ai(
+                result.get("har") or {}, payload.get("hint", "")
+            )
+            result["ai"] = ai_out
         except ai_client.AIClientError as e:
-            result["ai_error"] = str(e)
+            # AI 不可用或 HAR 无可分析请求 - 不算硬错误, 标记 ai_skipped
+            result["ai_skipped"] = str(e)
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger_web_handler.error(
                 "auto_capture AI 分析异常: %s", e, exc_info=config.traceback_print

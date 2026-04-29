@@ -66,15 +66,9 @@ class TestPickButton(unittest.TestCase):
 
 
 class TestParseCookieStr(unittest.TestCase):
-    """从 app.py 测试 cookie 字符串解析；如果运行时 playwright 未安装会跳过。"""
-
     def test_basic(self):
-        try:
-            from app import _parse_cookie_str_to_storage_state  # type: ignore
-        except Exception:
-            self.skipTest("app.py 依赖 playwright/fastapi, 跳过")
-            return
-        st = _parse_cookie_str_to_storage_state(
+        from security import parse_cookie_str_to_storage_state
+        st = parse_cookie_str_to_storage_state(
             "session=abc; token=xyz", "https://example.com/sign"
         )
         self.assertEqual(len(st["cookies"]), 2)
@@ -85,16 +79,80 @@ class TestParseCookieStr(unittest.TestCase):
             self.assertTrue(c["secure"])
 
     def test_empty_pairs_ignored(self):
-        try:
-            from app import _parse_cookie_str_to_storage_state  # type: ignore
-        except Exception:
-            self.skipTest("app.py 依赖 playwright/fastapi, 跳过")
-            return
-        st = _parse_cookie_str_to_storage_state(
+        from security import parse_cookie_str_to_storage_state
+        st = parse_cookie_str_to_storage_state(
             ";; key=val ; ;= ;", "http://x.com/"
         )
         self.assertEqual(len(st["cookies"]), 1)
         self.assertEqual(st["cookies"][0]["name"], "key")
+
+
+class TestSanitizeStorageState(unittest.TestCase):
+    """剔除跨域 cookie / origin。"""
+
+    def test_drops_unrelated_cookies(self):
+        from security import sanitize_storage_state
+        state = {
+            "cookies": [
+                {"name": "a", "value": "1", "domain": ".example.com"},
+                {"name": "b", "value": "2", "domain": ".attacker.com"},
+                # sub.example.com cookie 不应匹配父域 example.com
+                {"name": "c", "value": "3", "domain": "sub.example.com"},
+            ],
+            "origins": [],
+        }
+        out = sanitize_storage_state(state, "https://example.com/sign")
+        names = {c["name"] for c in out["cookies"]}
+        self.assertSetEqual(names, {"a"})
+
+    def test_parent_cookie_applies_to_subdomain(self):
+        from security import sanitize_storage_state
+        # .example.com 应匹配 api.example.com 请求 (浏览器一致行为)
+        state = {
+            "cookies": [{"name": "a", "value": "1", "domain": ".example.com"}],
+            "origins": [],
+        }
+        out = sanitize_storage_state(state, "https://api.example.com/")
+        self.assertEqual(len(out["cookies"]), 1)
+
+    def test_drops_unrelated_origins(self):
+        from security import sanitize_storage_state
+        state = {
+            "cookies": [],
+            "origins": [
+                {"origin": "https://example.com", "localStorage": []},
+                {"origin": "https://evil.com", "localStorage": []},
+            ],
+        }
+        out = sanitize_storage_state(state, "https://example.com/")
+        self.assertEqual(len(out["origins"]), 1)
+        self.assertEqual(out["origins"][0]["origin"], "https://example.com")
+
+    def test_subdomain_match(self):
+        from security import sanitize_storage_state
+        # sub.example.com 请求, cookie domain=.example.com 应保留
+        state = {"cookies": [{"name": "a", "value": "1", "domain": ".example.com"}], "origins": []}
+        out = sanitize_storage_state(state, "https://sub.example.com/")
+        self.assertEqual(len(out["cookies"]), 1)
+
+    def test_no_match_url(self):
+        from security import sanitize_storage_state
+        # URL 没有 hostname 时不放任何 cookie
+        state = {"cookies": [{"name": "a", "value": "1", "domain": ".example.com"}], "origins": []}
+        out = sanitize_storage_state(state, "file:///etc/passwd")
+        self.assertEqual(out["cookies"], [])
+
+    def test_attacker_domain_substring(self):
+        # 防御 example.com vs notexample.com 的子串攻击
+        from security import sanitize_storage_state
+        state = {
+            "cookies": [
+                {"name": "a", "value": "1", "domain": ".notexample.com"},
+            ],
+            "origins": [],
+        }
+        out = sanitize_storage_state(state, "https://example.com/")
+        self.assertEqual(out["cookies"], [])
 
 
 if __name__ == "__main__":
