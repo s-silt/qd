@@ -32,6 +32,8 @@ aiosqlite = "*"
 cryptography = "*"
 aiohttp = "*"
 sqlalchemy = {version = ">=2.0,<3.0", extras = ["asyncio"]}
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*"}
 tzdata = "*"
 greenlet = "*"
 pycurl = "*"
