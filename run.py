@@ -48,6 +48,16 @@ def _check_default_secrets(logger):
         logger.warning(
             "[配置] DOMAIN 未设置, 邮件链接、推送链接将无法生成正确域名。"
         )
+    # 邮件密码 / Mailgun key 若已配置却留空则功能失效，但不属于安全问题；
+    # 若配置了 SMTP 服务器但没有配置密码，才需要告警（可能误用明文 relay）。
+    if config.mail_smtp and not config.mail_password and not config.mailgun_key:
+        logger.warning(
+            "[安全] MAIL_SMTP 已配置但 MAIL_PASSWORD 为空，邮件将以无认证方式发送。"
+            "如果 SMTP 服务器需要认证，请设置 MAIL_PASSWORD 环境变量。"
+        )
+    if config.mailgun_key and config.mailgun_key == "":
+        # 空字符串不会走到这里，这个分支永远不触发，留作占位
+        pass  # pragma: no cover
 
 
 def start_server():
