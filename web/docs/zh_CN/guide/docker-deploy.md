@@ -97,6 +97,14 @@ docker compose -f docker-compose.local.yml logs -f qd
 # Ctrl+C 退出查看
 ```
 
+成功启动会看到（FastAPI 模式，默认）：
+
+```
+[I QD.FastAPI fastapi_app:215] FastAPI: registered 18 router(s)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:80
+```
+
 启动日志中如果看到下面这类 WARNING，说明你忘了改密钥：
 
 ```
@@ -249,6 +257,7 @@ environment:
 
 | 改动 | 是否影响老模板 | 说明 |
 | --- | --- | --- |
+| **Web 层 Tornado → FastAPI**（v20260429） | ❌ | HAR 重放引擎、变量沙箱、Cookie 会话、DB schema 均未改；旧 secure-cookie 二进制级兼容，老用户无需重新登录。详见 [迁移教程](./migrate-fastapi.md) |
 | 新增 AI 识别按钮 + `/har/ai_analyze` 端点 | ❌ | 纯新增功能，不点不影响任何旧逻辑 |
 | `worker.push_batch` N+1 重构 | ❌ | 只优化查询次数，推送内容、判定逻辑、调度规则一字未改 |
 | `worker.clear_log` 改批量删除 | ❌ | 一次性删过期日志 vs 逐条删，结果一致 |
@@ -289,7 +298,22 @@ git pull
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
-### 回滚
+### 回退到 Tornado（Web 框架回滚）
+
+如果升级到 FastAPI 后遇到问题，无需重建镜像，只需在 `docker-compose.local.yml` 里加一行环境变量：
+
+```yaml
+environment:
+  - WEB_FRAMEWORK=tornado    # ← 加这一行，其余不变
+```
+
+```bash
+docker compose -f docker-compose.local.yml restart qd
+```
+
+详细步骤与注意事项见 [Tornado → FastAPI 迁移指南](./migrate-fastapi.md)。
+
+### 代码版本回滚
 
 ```bash
 git log --oneline -10              # 找到要回滚到的 commit
@@ -380,7 +404,9 @@ FROM qdtoday/qd:lite-latest
 
 ## 七、相关文档
 
+- [Tornado → FastAPI 迁移指南](./migrate-fastapi.md)（老用户升级必读）
 - [HAR 抓包教程](./har-capture.md)
 - [AI 智能识别签到模板](./ai-sign-template.md)
+- [URL 自动抓包](./auto-capture.md)
 - [使用指南](./how-to-use.md)
 - [常见问题](./faq.md)
