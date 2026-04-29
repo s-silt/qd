@@ -1,0 +1,72 @@
+name: Release fork (ghcr.io + GitHub Release)
+# Fork 友好的发行版 workflow:
+# - 只在 s-silt/qd 仓库内运行，避免被 chained fork 误触发
+# - 推送日期形式 tag (例如 20260429) 时:
+#   · 用 Dockerfile.local 构建 multi-arch 镜像并推到 ghcr.io/s-silt/qd:<tag> + :latest
+#   · GitHub Release 由仓库已有的 ChangeRelease.yml 用 dropseed/changerelease@v1
+#     从 CHANGELOG.md 自动解析创建; 本 workflow 只负责 docker
+
+on:
+  push:
+    tags:
+      - "20[0-9][0-9][0-9][0-9][0-9][0-9]"     # 20YYMMDD
+      - "v20[0-9][0-9][0-9][0-9][0-9][0-9]"    # v20YYMMDD (容错)
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. 20260429). Required when running manually."
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker:
+    name: Build & push fork docker image
+    runs-on: ubuntu-latest
+    if: github.repository == 's-silt/qd'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            REF="${GITHUB_REF#refs/tags/}"
+          else
+            REF="${{ github.event.inputs.tag }}"
+          fi
+          # strip optional leading "v"
+          VERSION="${REF#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.local
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/s-silt/qd:${{ steps.tag.outputs.version }}
+            ghcr.io/s-silt/qd:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/s-silt/qd
+            org.opencontainers.image.version=${{ steps.tag.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
