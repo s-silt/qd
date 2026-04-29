@@ -610,6 +610,141 @@ class HARAIStatus(BaseHandler):
         )
 
 
+class HARAutoCapture(BaseHandler):
+    """通过 Playwright sidecar 自动抓 HAR。
+
+    请求体:
+        {
+            "url": "https://...",
+            "cookies": "k=v; k2=v2"  或  "storage_state": {...},
+            "hint": "每日签到",
+            "selector": null | "css selector",
+            "auto_analyze": true     # 抓到 HAR 后是否自动调用 AI 分析
+        }
+    响应:
+        sidecar 原始返回 (含 har / candidates / actions),
+        若 auto_analyze=true 且抓包成功, 自动衔接 AI 并把结果一并返回。
+    """
+
+    @tornado.web.authenticated
+    async def post(self) -> None:
+        self.evil(+1)
+        if not config.playwright_sidecar_url:
+            self.set_status(503)
+            await self.finish(
+                {
+                    "ok": False,
+                    "error": "URL 自动抓包未启用, 请管理员设置 PLAYWRIGHT_SIDECAR_URL "
+                    "并部署 services/playwright 容器",
+                }
+            )
+            return
+        try:
+            payload = json.loads(self.request.body or b"{}")
+        except json.JSONDecodeError as e:
+            self.set_status(400)
+            await self.finish({"ok": False, "error": f"请求体不是合法 JSON: {e}"})
+            return
+        if not isinstance(payload.get("url"), str):
+            self.set_status(400)
+            await self.finish({"ok": False, "error": "url 字段必填"})
+            return
+        auto_analyze = bool(payload.pop("auto_analyze", False))
+
+        sidecar_url = config.playwright_sidecar_url.rstrip("/") + "/capture"
+        # 延迟导入 aiohttp, 与 ai_client 保持一致, 便于离线测试导入
+        import aiohttp
+
+        timeout = aiohttp.ClientTimeout(total=config.playwright_capture_timeout)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(sidecar_url, json=payload) as resp:
+                    text = await resp.text()
+                    if resp.status >= 500:
+                        logger_web_handler.warning(
+                            "Playwright sidecar 5xx %s: %s", resp.status, text[:300]
+                        )
+                        self.set_status(502)
+                        await self.finish(
+                            {
+                                "ok": False,
+                                "error": f"sidecar 内部错误 {resp.status}: {text[:300]}",
+                            }
+                        )
+                        return
+                    try:
+                        result = json.loads(text)
+                    except json.JSONDecodeError as e:
+                        self.set_status(502)
+                        await self.finish(
+                            {
+                                "ok": False,
+                                "error": f"sidecar 响应非合法 JSON: {e}",
+                            }
+                        )
+                        return
+        except aiohttp.ClientError as e:
+            self.set_status(502)
+            await self.finish(
+                {"ok": False, "error": f"连接 sidecar 失败: {e}"}
+            )
+            return
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger_web_handler.error(
+                "auto_capture 异常: %s", e, exc_info=config.traceback_print
+            )
+            self.set_status(500)
+            await self.finish({"ok": False, "error": f"内部错误: {e}"})
+            return
+
+        # 抓包失败 / 没要求 AI 分析, 直接返回
+        if not result.get("ok") or not auto_analyze:
+            await self.finish(result)
+            return
+
+        har = result.get("har") or {}
+        try:
+            client = ai_client.AIClient()
+            if not client.enabled:
+                result["ai_skipped"] = "AI_API_KEY 未配置, 仅返回原始 HAR"
+                await self.finish(result)
+                return
+            slim = ai_client.preprocess_har(har, config.ai_max_har_entries)
+            if not slim:
+                result["ai_skipped"] = "HAR 中无可分析请求"
+                await self.finish(result)
+                return
+            messages = ai_client.build_messages(slim, hint=payload.get("hint", ""))
+            content = await client.chat(messages, temperature=0.1)
+            ai_result = ai_client.parse_ai_response(content)
+            result["ai"] = {
+                "result": ai_result,
+                "har": ai_client.ai_result_to_har(ai_result),
+                "stats": {"input_entries": len(slim)},
+            }
+        except ai_client.AIClientError as e:
+            result["ai_error"] = str(e)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger_web_handler.error(
+                "auto_capture AI 分析异常: %s", e, exc_info=config.traceback_print
+            )
+            result["ai_error"] = f"AI 分析内部错误: {e}"
+
+        await self.finish(result)
+
+
+class HARAutoCaptureStatus(BaseHandler):
+    """前端查询自动抓包功能是否可用。"""
+
+    async def get(self) -> None:
+        await self.finish(
+            {
+                "enabled": bool(config.playwright_sidecar_url),
+                "sidecar_url": config.playwright_sidecar_url or "",
+            }
+        )
+
+
 handlers = [
     (r"/tpl/(\d+)/edit", HAREditor),
     (r"/tpl/(\d+)/save", HARSave),
@@ -618,4 +753,6 @@ handlers = [
     (r"/har/test", HARTest),
     (r"/har/ai_analyze", HARAIAnalyze),
     (r"/har/ai_status", HARAIStatus),
+    (r"/har/auto_capture", HARAutoCapture),
+    (r"/har/auto_capture_status", HARAutoCaptureStatus),
 ]

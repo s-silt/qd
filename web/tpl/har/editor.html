@@ -148,6 +148,7 @@
 
       <div class="text-right">
         <button class="btn btn-default" data-toggle="modal" data-target="#upload-har" >追加HAR</button>
+        <button class="btn btn-default" data-toggle="modal" data-target="#auto-capture" ng-click="open()">URL 自动抓包</button>
         <button class="btn btn-default" data-toggle="modal" data-target="#ai-analyze" ng-click="ai_open()">AI 智能识别签到</button>
         <a id="download-har" target="_blank" class="btn btn-default" ng-click="download()">下载</a>
         <button class="btn btn-default" data-toggle="modal" data-target="#test-har" ng-click="pre_save()">测试</button>
@@ -268,6 +269,91 @@
 {% endraw %}
 {% include "har/entry_editor.html" %}
 {% raw %}
+
+  <!-- Auto capture (Playwright sidecar) modal -->
+  <div class="modal fade" id="auto-capture" ng-controller="AutoCaptureCtrl">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h4 class="modal-title">URL 自动抓包（Playwright）</h4>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning" ng-if="!enabled" role="alert">
+            自动抓包功能未启用：请管理员部署 <code>services/playwright</code> sidecar 容器并设置环境变量 <code>PLAYWRIGHT_SIDECAR_URL</code>。详见
+            <a href="/static/docs/auto-capture.md" target="_blank">部署文档</a>。
+          </div>
+          <div class="alert alert-info" ng-if="enabled" role="alert">
+            填入登录后的 Cookie 或 storage_state，让 Playwright 加载页面、找到签到按钮并自动录制 HAR。<strong>登录这一步需要你在浏览器里完成</strong>，复制 Cookie 后粘贴到下方。
+          </div>
+          <div class="alert alert-danger" ng-if="error" role="alert">{{ error }}</div>
+          <div class="form-horizontal" role="form">
+            <div class="form-group">
+              <label class="col-sm-3 control-label">URL *</label>
+              <div class="col-sm-9">
+                <input ng-model="url" placeholder="https://example.com/sign-in" style="width: 100%">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="col-sm-3 control-label">Cookie</label>
+              <div class="col-sm-9">
+                <textarea ng-model="cookies" rows="3" style="width: 100%" placeholder="key1=value1; key2=value2 ..."></textarea>
+                <p class="help-block">从浏览器 F12 → Application → Cookies 复制；如果你有完整 storage_state.json 请填下面那项（优先生效）。</p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="col-sm-3 control-label">storage_state JSON</label>
+              <div class="col-sm-9">
+                <textarea ng-model="storage_state" rows="3" style="width: 100%" placeholder='{"cookies": [...], "origins": [...]}'></textarea>
+                <p class="help-block">Playwright storage_state 格式，可由浏览器扩展导出（推荐）；填了这个 Cookie 字段会被忽略。</p>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="col-sm-3 control-label">提示词</label>
+              <div class="col-sm-9">
+                <input ng-model="hint" placeholder="例：每日签到 / 积分领取 / 打卡">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="col-sm-3 control-label">CSS Selector（可选）</label>
+              <div class="col-sm-9">
+                <input ng-model="selector" placeholder="#sign-in-btn 或 .daily-check 等，留空则启发式自动找">
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="col-sm-offset-3 col-sm-9">
+                <label><input type="checkbox" ng-model="auto_analyze"> 抓到 HAR 后自动调用 AI 分析（需配置 AI_API_KEY）</label>
+              </div>
+            </div>
+          </div>
+          <div ng-if="result">
+            <hr>
+            <strong>抓包结果：</strong>
+            <p ng-if="result.found_button">已点击：<code>{{ result.found_button.text }}</code>（selector: <code>{{ result.found_button.selector }}</code>）</p>
+            <p>原始请求条数：{{ result.har.log.entries.length }} / 用时 {{ result.elapsed_ms }} ms</p>
+            <p ng-if="result.ai">
+              AI 识别站点：<code>{{ result.ai.result.sitename }}</code> · 关键请求 {{ result.ai.har.log.entries.length }} 条
+            </p>
+            <p ng-if="result.ai_error" class="text-danger">AI 后处理失败：{{ result.ai_error }}</p>
+          </div>
+          <div ng-if="candidates && candidates.length">
+            <hr>
+            <strong>候选按钮（点击应用为 selector 后重试）：</strong>
+            <ul class="list-group" style="max-height:200px;overflow:auto;margin-top:8px">
+              <li class="list-group-item" ng-repeat="c in candidates" style="padding:6px 10px">
+                <a href="javascript:void(0)" ng-click="use_candidate_selector(c)">{{ c.text }}</a>
+                <small class="text-muted">{{ c.tag }} · score {{ c._score }} · <code>{{ c.selector }}</code></small>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-primary" data-loading-text="抓包中..." ng-disabled="!enabled || busy" ng-click="run()">开始抓包</button>
+          <button type="button" class="btn btn-success" ng-if="result && result.ok" ng-click="apply()">应用为当前模板</button>
+        </div>
+      </div>
+    </div>
+  </div><!-- /.auto-capture modal -->
 
   <!-- AI analyze modal -->
   <div class="modal fade" id="ai-analyze" ng-controller="AIAnalyzeCtrl">

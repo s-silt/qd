@@ -344,6 +344,14 @@ ai_max_har_entries = int(
     os.getenv("AI_MAX_HAR_ENTRIES", "60")
 )  # AI 分析时单个 HAR 文件最多保留的请求数, 防止 token 超限
 
+# Playwright sidecar 自动抓 HAR 设置
+# 部署 services/playwright 容器后, 通过此 URL 调用其 /capture 端点
+# 留空则禁用 "URL 自动抓包" 功能
+playwright_sidecar_url = os.getenv("PLAYWRIGHT_SIDECAR_URL", "")
+playwright_capture_timeout = int(
+    os.getenv("PLAYWRIGHT_CAPTURE_TIMEOUT", "120")
+)  # 调用 sidecar 的总超时(秒), 含浏览器启动 + 加载 + 点击 + HAR 序列化
+
 try:
     from local_config import *  # 修改 `local_config.py` 文件的内容不受通过 Git 更新源码的影响
 

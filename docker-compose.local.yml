@@ -32,6 +32,12 @@ services:
       # - AI_TIMEOUT=60
       # - AI_MAX_HAR_ENTRIES=60
 
+      # === URL 自动抓包（Playwright sidecar）===
+      # 启用下方 playwright 服务后取消下行注释, 即可在 HAR 编辑器
+      # 使用 "URL 自动抓包" 按钮, 配合 Cookie/storage_state 自动录 HAR
+      # - PLAYWRIGHT_SIDECAR_URL=http://playwright:8924
+      # - PLAYWRIGHT_CAPTURE_TIMEOUT=120
+
       # === 其他常用项（按需启用）===
       # - QD_DEBUG=False
       # - MULTI_PROCESS=False
@@ -51,4 +57,23 @@ services:
     command: ["--loglevel", "warning"]
     volumes:
       - ./redis/data:/data:rw
+    restart: unless-stopped
+
+  # Playwright sidecar - 提供 URL → HAR 自动抓包能力
+  # 镜像约 1.5GB, 不需要时可整段注释掉
+  playwright:
+    build:
+      context: ./services/playwright
+      dockerfile: Dockerfile
+    image: s-silt/qd-playwright:local
+    container_name: qd-playwright
+    environment:
+      - HEADLESS=true
+      - MAX_CONCURRENT=2          # 同时跑的浏览器会话数
+      - DEFAULT_TIMEOUT_MS=60000  # 单次抓包超时 ms
+      # - ALLOW_HOSTS=example.com,foo.com  # host 白名单, 留空允许全部
+    shm_size: 1gb                  # 给 Chromium 共享内存, 避免 OOM
+    # 不对外暴露端口, QD 容器内通过 service name "playwright" 访问即可
+    expose:
+      - "8924"
     restart: unless-stopped
