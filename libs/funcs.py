@@ -32,9 +32,12 @@ class Pusher:
 
         text = await res.text()
         if text:
+            # text has already consumed the body; parse JSON from the string
+            # rather than calling res.json() which would re-read an exhausted stream.
             _json = {}
             try:
-                _json = await res.json()
+                import json as _json_mod
+                _json = _json_mod.loads(text)
             except Exception as e:
                 logger_funcs.debug(e, exc_info=config.traceback_print)
             if _json:

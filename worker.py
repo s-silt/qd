@@ -14,7 +14,7 @@ from typing import Dict
 import tornado.ioloop
 import tornado.log
 from tornado import gen
-from tornado.concurrent import Future
+from tornado.concurrent import Future  # used by BatchWorker.done callback
 
 import config
 from db import DB
@@ -169,7 +169,7 @@ class BaseWorker:
 
         push_batch["time"] = push_batch['time'] + delta
         if tmp and numlog:
-            user_email = user.get('email', 'Unkown')
+            user_email = user.get('email', 'Unknown')
             logger_worker.debug(
                 "Start push batch log for user %s, email:%s", userid, user_email
             )
@@ -384,7 +384,10 @@ class BaseWorker:
 
         if should_push:
             try:
-                pushtool = Pusher(self.db, sql_session=sql_session)
+                # Pass sql_session=None so Pusher opens its own fresh session;
+                # the previous session was closed when the second transaction
+                # block above exited.
+                pushtool = Pusher(self.db, sql_session=None)
                 await pushtool.pusher(userid, pushsw, should_push, title, content)
             except Exception as e:
                 logger_worker.error('taskid:%d push failed! %s', task['id'], str(e), exc_info=config.traceback_print)
