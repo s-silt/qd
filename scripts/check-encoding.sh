@@ -37,6 +37,8 @@ EXCLUDE_PATTERNS=(
     '__pycache__/'
     '.mypy_cache/'
     '.pytest_cache/'
+    # 本身就以展示损坏字符为目的的文档
+    'docs/encoding-anomalies-fix-2026-04-29.md'
 )
 
 # ---- 排除文件名后缀 ----
