@@ -187,3 +187,6 @@ cache
 
 alembic.ini
 .hintrc
+
+# Claude Code agent worktrees (local agent isolation, do not commit)
+.claude/
