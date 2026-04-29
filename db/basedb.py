@@ -120,7 +120,11 @@ class AlchemyMixin:
 
     async def _insert_or_update(self, insert_stmt: Insert, sql_session: Optional[AsyncSession] = None, **kwargs) -> int:
         async with self.transaction(sql_session) as sql_session:
-            insert_stmt.on_duplicate_key_update(**kwargs)
+            # on_duplicate_key_update() returns a *new* statement object; it does
+            # not mutate insert_stmt in place.  Assigning the return value ensures
+            # the ON DUPLICATE KEY UPDATE clause is actually included in the SQL
+            # that gets executed.
+            insert_stmt = insert_stmt.on_duplicate_key_update(**kwargs)
             result: Result = await sql_session.execute(insert_stmt)
             return result.lastrowid if hasattr(result, 'lastrowid') else -1
 
