@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QD 框架 — 任务列表（扁平化 POC）</title>
+  <link rel="stylesheet" href="theme-flat.css">
+  <link rel="stylesheet" href="theme-flat-dark.css">
+  <style>
+    /* ---- demo-only tweaks ---- */
+    /* Dark-mode toggle state */
+    html.dark body { background: var(--bg-page); }
+
+    /* Inline SVG icon helpers used in this demo */
+    .icon {
+      display: inline-block;
+      width: 1em;
+      height: 1em;
+      vertical-align: -0.1em;
+      fill: currentColor;
+    }
+
+    /* Checkbox column */
+    .col-check { width: 32px; text-align: center; }
+
+    /* Status column centered */
+    .col-status  { text-align: center; width: 100px; }
+    .col-counter { text-align: center; width: 90px; }
+    .col-date    { width: 130px; white-space: nowrap; }
+    .col-ops     { text-align: center; width: 240px; }
+
+    /* Section separator */
+    .section-title {
+      font-size: var(--font-size-lg);
+      font-weight: 700;
+      color: var(--text-primary);
+      margin: 0 0 var(--space-5);
+    }
+
+    .section + .section {
+      margin-top: var(--space-10);
+    }
+
+    /* Group header row */
+    .group-row td {
+      background: var(--color-primary-subtle) !important;
+      color: var(--color-primary-dark);
+      font-weight: 600;
+      font-size: var(--font-size-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 8px 16px;
+    }
+
+    /* Disabled row dimmed */
+    tr.task-disabled td {
+      opacity: 0.55;
+    }
+
+    /* Running animation */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.35; }
+    }
+    .badge-running .qd-badge {
+      animation: pulse-dot 1.4s ease infinite;
+    }
+
+    /* Demo notice banner */
+    .demo-notice {
+      background: #fffbe6;
+      border: 1px solid #ffe58f;
+      border-radius: var(--border-radius);
+      padding: var(--space-3) var(--space-5);
+      font-size: var(--font-size-xs);
+      color: #7d5a00;
+      margin-bottom: var(--space-6);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    /* Toolbar search full-width on small */
+    @media (max-width: 767px) {
+      .col-date, .col-ops { display: none; }
+    }
+  </style>
+</head>
+
+<body>
+
+<!-- =========================================================
+     TOP NAV
+     ========================================================= -->
+<nav class="qd-nav">
+  <div class="qd-nav__inner">
+    <!-- Brand -->
+    <a href="#" class="qd-nav__brand">
+      <svg class="icon" viewBox="0 0 32 32" style="width:26px;height:26px;">
+        <rect width="32" height="32" rx="6" fill="var(--color-primary)"/>
+        <text x="16" y="22" text-anchor="middle" font-family="sans-serif" font-weight="800" font-size="16" fill="#fff">QD</text>
+      </svg>
+      QD 框架
+    </a>
+
+    <!-- Nav links -->
+    <nav class="qd-nav__links">
+      <a href="#" class="qd-nav__link qd-nav__link--active">我的任务</a>
+      <a href="#" class="qd-nav__link">公开模板</a>
+      <a href="#" class="qd-nav__link">API 文档</a>
+    </nav>
+
+    <!-- Actions -->
+    <div class="qd-nav__actions">
+      <!-- Dark mode toggle -->
+      <button class="qd-theme-toggle" id="themeToggle" title="切换暗色模式" aria-label="切换暗色模式">
+        <span id="themeIcon">🌙</span>
+      </button>
+      <a href="#" class="qd-btn qd-btn--default qd-btn--sm">
+        <svg class="icon" viewBox="0 0 16 16"><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zm0 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4zm0 7.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/></svg>
+        帮助
+      </a>
+      <a href="#" class="qd-btn qd-btn--ghost qd-btn--sm">登出</a>
+    </div>
+  </div>
+</nav>
+
+
+<!-- =========================================================
+     PAGE BODY
+     ========================================================= -->
+<div class="qd-container">
+  <div class="qd-page">
+
+    <!-- Demo notice -->
+    <div class="demo-notice">
+      <span>📐</span>
+      <span>这是 <strong>扁平化重设计 POC</strong>（demo-index.html），静态演示，不连接后端。</span>
+    </div>
+
+    <!-- ---- STAT STRIP ---- -->
+    <div class="qd-stat-strip">
+      <div class="qd-stat qd-stat--primary">
+        <div class="qd-stat__label">总任务数</div>
+        <div class="qd-stat__value">12</div>
+      </div>
+      <div class="qd-stat qd-stat--success">
+        <div class="qd-stat__label">运行中</div>
+        <div class="qd-stat__value">8</div>
+      </div>
+      <div class="qd-stat qd-stat--danger">
+        <div class="qd-stat__label">已禁用</div>
+        <div class="qd-stat__value">2</div>
+      </div>
+      <div class="qd-stat">
+        <div class="qd-stat__label">今日成功</div>
+        <div class="qd-stat__value">47</div>
+      </div>
+    </div>
+
+    <!-- =========================================================
+         SECTION: MY TASKS
+         ========================================================= -->
+    <section class="section">
+      <div class="qd-page__header">
+        <div>
+          <h1 class="qd-page__title">我的任务</h1>
+          <p class="qd-page__subtitle">管理你的定时签到任务</p>
+        </div>
+        <div class="d-flex align-center gap-3">
+          <a href="#" class="qd-btn qd-btn--primary">
+            <svg class="icon" viewBox="0 0 16 16"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>
+            新建任务
+          </a>
+        </div>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="qd-toolbar">
+        <!-- Batch op buttons -->
+        <div class="qd-btn-group">
+          <button class="qd-btn qd-btn--default qd-btn--sm">禁用</button>
+          <button class="qd-btn qd-btn--default qd-btn--sm">启用</button>
+          <button class="qd-btn qd-btn--danger qd-btn--sm">删除</button>
+          <button class="qd-btn qd-btn--default qd-btn--sm">定时</button>
+          <button class="qd-btn qd-btn--default qd-btn--sm">分组</button>
+        </div>
+
+        <!-- Search -->
+        <div class="qd-search" style="flex:1;max-width:320px;">
+          <span class="qd-search__icon">
+            <svg class="icon" viewBox="0 0 16 16"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398l3.85 3.85a1 1 0 0 0 1.415-1.415l-3.868-3.833zm-5.242 1.406a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>
+          </span>
+          <input type="search" class="qd-input qd-search__input" placeholder="搜索任务名称…" aria-label="搜索任务">
+        </div>
+
+        <!-- View toggle -->
+        <div class="qd-btn-group" style="margin-left:auto;" aria-label="切换视图">
+          <button class="qd-btn qd-btn--primary qd-btn--sm" title="表格视图" aria-pressed="true">
+            <svg class="icon" viewBox="0 0 16 16"><path d="M0 2h16v2H0zm0 5h16v2H0zm0 5h16v2H0z"/></svg>
+          </button>
+          <button class="qd-btn qd-btn--default qd-btn--sm" title="卡片视图" aria-pressed="false">
+            <svg class="icon" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ---- TABLE VIEW ---- -->
+      <div class="qd-table-wrap">
+        <table class="qd-table" id="taskTable">
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" aria-label="全选"></th>
+              <th>任务名称</th>
+              <th class="col-counter">成 / 败</th>
+              <th class="col-date">上次成功</th>
+              <th class="col-status">状态</th>
+              <th class="col-date">下次运行</th>
+              <th class="col-ops">操作</th>
+            </tr>
+          </thead>
+
+          <!-- Group: 默认分组 -->
+          <tbody>
+            <tr class="group-row">
+              <td colspan="7">
+                <input type="checkbox" aria-label="全选该分组" style="margin-right:8px;">
+                默认分组
+                <button style="float:right;background:none;border:none;cursor:pointer;color:var(--color-primary-dark);font-size:12px;" aria-label="折叠">▾ 折叠</button>
+              </td>
+            </tr>
+
+            <!-- Task 1: active success -->
+            <tr>
+              <td class="col-check"><input type="checkbox" aria-label="选择任务"></td>
+              <td>
+                <div style="font-weight:500;">Bilibili 每日签到</div>
+                <div style="font-size:var(--font-size-xs);color:var(--text-muted);">bilibili.com</div>
+              </td>
+              <td class="col-counter">
+                <span class="qd-count">
+                  <span class="qd-count__success">128</span>
+                  <span style="color:var(--border-color)">/</span>
+                  <span class="qd-count__fail">3</span>
+                </span>
+              </td>
+              <td class="col-date" style="color:var(--text-secondary);font-size:var(--font-size-xs);">2026-04-29 08:30</td>
+              <td class="col-status">
+                <span class="qd-badge qd-badge--success">运行中</span>
+              </td>
+              <td class="col-date" style="color:var(--text-secondary);font-size:var(--font-size-xs);">2026-04-30 08:30</td>
+              <td class="col-ops">
+                <div class="qd-btn-group">
+                  <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+                  <button class="qd-btn qd-btn--primary qd-btn--sm">执行</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">模板</a>
+                  <button class="qd-btn qd-btn--default qd-btn--sm">定时</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Task 2: warning / recent failure -->
+            <tr>
+              <td class="col-check"><input type="checkbox" aria-label="选择任务"></td>
+              <td>
+                <div style="font-weight:500;">签到宝 每日任务</div>
+                <div style="font-size:var(--font-size-xs);color:var(--text-muted);">qiandaobao.com</div>
+              </td>
+              <td class="col-counter">
+                <span class="qd-count">
+                  <span class="qd-count__success">54</span>
+                  <span style="color:var(--border-color)">/</span>
+                  <span class="qd-count__fail">12</span>
+                </span>
+              </td>
+              <td class="col-date" style="color:var(--text-secondary);font-size:var(--font-size-xs);">2026-04-27 09:15</td>
+              <td class="col-status">
+                <span class="qd-badge qd-badge--warning">待重试</span>
+              </td>
+              <td class="col-date" style="color:var(--text-secondary);font-size:var(--font-size-xs);">2026-04-29 09:15</td>
+              <td class="col-ops">
+                <div class="qd-btn-group">
+                  <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+                  <button class="qd-btn qd-btn--primary qd-btn--sm">执行</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">模板</a>
+                  <button class="qd-btn qd-btn--default qd-btn--sm">定时</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Task 3: disabled -->
+            <tr class="task-disabled">
+              <td class="col-check"><input type="checkbox" aria-label="选择任务"></td>
+              <td>
+                <div style="font-weight:500;">
+                  <span style="color:var(--color-danger);border-left:3px solid var(--color-danger);padding-left:6px;margin-right:4px;">[禁用]</span>
+                  Steam 积分签到
+                </div>
+                <div style="font-size:var(--font-size-xs);color:var(--text-muted);">store.steampowered.com</div>
+              </td>
+              <td class="col-counter">
+                <span class="qd-count">
+                  <span class="qd-count__success">30</span>
+                  <span style="color:var(--border-color)">/</span>
+                  <span class="qd-count__fail">1</span>
+                </span>
+              </td>
+              <td class="col-date" style="color:var(--text-muted);font-size:var(--font-size-xs);">2026-03-10 14:00</td>
+              <td class="col-status">
+                <span class="qd-badge qd-badge--disabled">已禁用</span>
+              </td>
+              <td class="col-date" style="color:var(--text-muted);font-size:var(--font-size-xs);">—</td>
+              <td class="col-ops">
+                <div class="qd-btn-group">
+                  <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+                  <button class="qd-btn qd-btn--primary qd-btn--sm">立即执行</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">模板</a>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+
+          <!-- Group: 游戏类 -->
+          <tbody>
+            <tr class="group-row">
+              <td colspan="7">
+                <input type="checkbox" aria-label="全选该分组" style="margin-right:8px;">
+                游戏类
+                <button style="float:right;background:none;border:none;cursor:pointer;color:var(--color-primary-dark);font-size:12px;" aria-label="折叠">▾ 折叠</button>
+              </td>
+            </tr>
+
+            <!-- Task 4: running -->
+            <tr>
+              <td class="col-check"><input type="checkbox" aria-label="选择任务"></td>
+              <td>
+                <div style="font-weight:500;">原神 每日委托</div>
+                <div style="font-size:var(--font-size-xs);color:var(--text-muted);">mihoyo.com</div>
+              </td>
+              <td class="col-counter">
+                <span class="qd-count">
+                  <span class="qd-count__success">210</span>
+                  <span style="color:var(--border-color)">/</span>
+                  <span class="qd-count__fail">0</span>
+                </span>
+              </td>
+              <td class="col-date" style="color:var(--text-secondary);font-size:var(--font-size-xs);">2026-04-29 06:00</td>
+              <td class="col-status badge-running">
+                <span class="qd-badge qd-badge--info">执行中</span>
+              </td>
+              <td class="col-date" style="color:var(--text-secondary);font-size:var(--font-size-xs);">2026-04-30 06:00</td>
+              <td class="col-ops">
+                <div class="qd-btn-group">
+                  <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+                  <button class="qd-btn qd-btn--primary qd-btn--sm">执行</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">模板</a>
+                  <button class="qd-btn qd-btn--default qd-btn--sm">定时</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Task 5: failed -->
+            <tr>
+              <td class="col-check"><input type="checkbox" aria-label="选择任务"></td>
+              <td>
+                <div style="font-weight:500;">王者荣耀 体力签到</div>
+                <div style="font-size:var(--font-size-xs);color:var(--text-muted);">honor.qq.com</div>
+              </td>
+              <td class="col-counter">
+                <span class="qd-count">
+                  <span class="qd-count__success">88</span>
+                  <span style="color:var(--border-color)">/</span>
+                  <span class="qd-count__fail">21</span>
+                </span>
+              </td>
+              <td class="col-date" style="color:var(--text-secondary);font-size:var(--font-size-xs);">2026-04-22 07:00</td>
+              <td class="col-status">
+                <span class="qd-badge qd-badge--danger">失败</span>
+              </td>
+              <td class="col-date" style="color:var(--text-secondary);font-size:var(--font-size-xs);">2026-04-29 07:00</td>
+              <td class="col-ops">
+                <div class="qd-btn-group">
+                  <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+                  <button class="qd-btn qd-btn--primary qd-btn--sm">执行</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">模板</a>
+                  <button class="qd-btn qd-btn--default qd-btn--sm">定时</button>
+                  <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+
+        </table>
+      </div>
+      <!-- /table view -->
+
+    </section><!-- /tasks section -->
+
+
+    <!-- =========================================================
+         SECTION: CARD VIEW (alternative layout demo)
+         ========================================================= -->
+    <section class="section">
+      <h2 class="section-title">卡片视图（同一数据，响应式四列）</h2>
+
+      <div class="qd-grid">
+
+        <!-- Card 1 -->
+        <div class="qd-task-card">
+          <div>
+            <div class="qd-task-card__title">Bilibili 每日签到</div>
+            <div class="qd-task-card__meta">
+              <div class="qd-task-card__meta-row">
+                <span class="qd-badge qd-badge--success">运行中</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span>上次成功：2026-04-29 08:30</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span class="qd-count">
+                  成功 <b class="qd-count__success">128</b> &nbsp;/&nbsp; 失败 <b class="qd-count__fail">3</b>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="qd-task-card__actions">
+            <button class="qd-btn qd-btn--primary qd-btn--sm">执行</button>
+            <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+            <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+            <button class="qd-btn qd-btn--ghost qd-btn--sm" style="margin-left:auto;">⋯</button>
+          </div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="qd-task-card">
+          <div>
+            <div class="qd-task-card__title">签到宝 每日任务</div>
+            <div class="qd-task-card__meta">
+              <div class="qd-task-card__meta-row">
+                <span class="qd-badge qd-badge--warning">待重试</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span>上次成功：2026-04-27 09:15</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span class="qd-count">
+                  成功 <b class="qd-count__success">54</b> &nbsp;/&nbsp; 失败 <b class="qd-count__fail">12</b>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="qd-task-card__actions">
+            <button class="qd-btn qd-btn--primary qd-btn--sm">执行</button>
+            <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+            <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+            <button class="qd-btn qd-btn--ghost qd-btn--sm" style="margin-left:auto;">⋯</button>
+          </div>
+        </div>
+
+        <!-- Card 3: disabled -->
+        <div class="qd-task-card" style="opacity:0.6;">
+          <div>
+            <div class="qd-task-card__title">Steam 积分签到</div>
+            <div class="qd-task-card__meta">
+              <div class="qd-task-card__meta-row">
+                <span class="qd-badge qd-badge--disabled">已禁用</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span>上次成功：2026-03-10 14:00</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span class="qd-count">
+                  成功 <b class="qd-count__success">30</b> &nbsp;/&nbsp; 失败 <b class="qd-count__fail">1</b>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="qd-task-card__actions">
+            <button class="qd-btn qd-btn--primary qd-btn--sm">立即执行</button>
+            <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+            <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+          </div>
+        </div>
+
+        <!-- Card 4: running -->
+        <div class="qd-task-card">
+          <div>
+            <div class="qd-task-card__title">原神 每日委托</div>
+            <div class="qd-task-card__meta">
+              <div class="qd-task-card__meta-row badge-running">
+                <span class="qd-badge qd-badge--info">执行中</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span>上次成功：2026-04-29 06:00</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span class="qd-count">
+                  成功 <b class="qd-count__success">210</b> &nbsp;/&nbsp; 失败 <b class="qd-count__fail">0</b>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="qd-task-card__actions">
+            <button class="qd-btn qd-btn--primary qd-btn--sm">执行</button>
+            <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+            <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+            <button class="qd-btn qd-btn--ghost qd-btn--sm" style="margin-left:auto;">⋯</button>
+          </div>
+        </div>
+
+        <!-- Card 5: failed -->
+        <div class="qd-task-card">
+          <div>
+            <div class="qd-task-card__title">王者荣耀 体力签到</div>
+            <div class="qd-task-card__meta">
+              <div class="qd-task-card__meta-row">
+                <span class="qd-badge qd-badge--danger">失败</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span>上次成功：2026-04-22 07:00</span>
+              </div>
+              <div class="qd-task-card__meta-row">
+                <span class="qd-count">
+                  成功 <b class="qd-count__success">88</b> &nbsp;/&nbsp; 失败 <b class="qd-count__fail">21</b>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="qd-task-card__actions">
+            <button class="qd-btn qd-btn--primary qd-btn--sm">执行</button>
+            <button class="qd-btn qd-btn--default qd-btn--sm">修改</button>
+            <a href="#" class="qd-btn qd-btn--default qd-btn--sm">日志</a>
+            <button class="qd-btn qd-btn--ghost qd-btn--sm" style="margin-left:auto;">⋯</button>
+          </div>
+        </div>
+
+        <!-- Empty / add-new card -->
+        <div class="qd-task-card" style="border-style:dashed;box-shadow:none;cursor:pointer;align-items:center;justify-content:center;min-height:160px;">
+          <div class="qd-empty" style="padding:var(--space-5);">
+            <div class="qd-empty__icon">＋</div>
+            <p class="qd-empty__desc">添加新任务</p>
+          </div>
+        </div>
+
+      </div>
+    </section><!-- /card view section -->
+
+
+    <!-- =========================================================
+         SECTION: Empty state demo
+         ========================================================= -->
+    <section class="section">
+      <h2 class="section-title">空状态（无任务时）</h2>
+      <div class="qd-card">
+        <div class="qd-card__body">
+          <div class="qd-empty">
+            <div class="qd-empty__icon">
+              <!-- Inbox SVG -->
+              <svg viewBox="0 0 48 48" width="36" height="36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="4" y="8" width="40" height="32" rx="4" stroke="currentColor" stroke-width="2.5"/>
+                <path d="M4 30h12l4 6h8l4-6h12" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h3 class="qd-empty__title">还没有任务</h3>
+            <p class="qd-empty__desc">新建一个定时任务，让 QD 框架帮你自动签到。</p>
+            <a href="#" class="qd-btn qd-btn--primary">
+              <svg class="icon" viewBox="0 0 16 16"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>
+              新建任务
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /.qd-page -->
+</div><!-- /.qd-container -->
+
+
+<!-- Footer -->
+<footer class="qd-footer">
+  <div class="qd-container">
+    源代码：<a href="https://github.com/qd-today/qd/" target="_blank">QD</a> |
+    Powered by <a href="https://github.com/qd-today/qd/" target="_blank">QD-Today</a> |
+    扁平化 POC © 2026
+  </div>
+</footer>
+
+
+<script>
+  // Dark-mode toggle (demo only)
+  const toggle = document.getElementById('themeToggle');
+  const icon   = document.getElementById('themeIcon');
+  const html   = document.documentElement;
+
+  toggle.addEventListener('click', function() {
+    html.classList.toggle('dark');
+    icon.textContent = html.classList.contains('dark') ? '☀️' : '🌙';
+  });
+</script>
+
+</body>
+</html>
