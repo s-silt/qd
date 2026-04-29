@@ -18,6 +18,9 @@ lint:  ## 代码检查
 	black --check --line-length 120 .
 	isort --check --profile black .
 
+lint-encoding:  ## 检查编码异常字符 (U+FFFD, U+200B 等)
+	@bash scripts/check-encoding.sh
+
 format:  ## 代码格式化
 	black --line-length 120 .
 	isort --profile black .

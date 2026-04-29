@@ -1,4 +1,14 @@
 repos:
+  - repo: local
+    hooks:
+      - id: check-encoding
+        name: lint-encoding (U+FFFD / invisible chars)
+        language: script
+        entry: scripts/check-encoding.sh
+        args: ["--staged"]
+        pass_filenames: false
+        always_run: true
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
