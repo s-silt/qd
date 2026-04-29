@@ -1,0 +1,6 @@
+# 集成测试用依赖, 不安装到生产 sidecar 镜像
+# 在容器内运行:
+#   pip install -r requirements-dev.txt && pytest -v
+pytest>=8.0
+pytest-asyncio>=0.23
+aiohttp>=3.10

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>QD Test Sign Page</title>
+</head>
+<body>
+  <h1>测试站点</h1>
+  <p>这是 QD Playwright 集成测试用的假签到页面。</p>
+  <button id="login-btn">登录</button>
+  <button data-testid="signin-btn" onclick="doSignIn()">立即签到</button>
+  <button>退出</button>
+  <a href="javascript:void(0)" onclick="doSignIn()">每日打卡</a>
+  <div id="result" style="margin-top:1em"></div>
+  <script>
+    async function doSignIn() {
+      try {
+        const resp = await fetch('/api/sign', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: 'sign'})
+        });
+        const data = await resp.json();
+        document.getElementById('result').textContent = data.message;
+      } catch (e) {
+        document.getElementById('result').textContent = '失败: ' + e;
+      }
+    }
+  </script>
+</body>
+</html>
