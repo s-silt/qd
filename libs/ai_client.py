@@ -97,7 +97,7 @@ class AIClient:
             return data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as e:
             # Log detail at debug; surface only generic message to caller
-            logger_ai.debug("AI 响���结构不符合预期: %.500s", str(data))
+            logger_ai.debug("AI 响应结构不符合预期: %.500s", str(data))
             raise AIClientError("AI 响应结构不符合预期，请检查所选模型是否兼容 OpenAI Chat Completions 协议") from e
 
 
