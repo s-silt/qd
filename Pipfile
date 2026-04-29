@@ -31,7 +31,7 @@ aiomysql = "*"
 aiosqlite = "*"
 cryptography = "*"
 aiohttp = "*"
-sqlalchemy = {version = "<2.0", extras = ["asyncio"]}
+sqlalchemy = {version = ">=2.0,<3.0", extras = ["asyncio"]}
 tzdata = "*"
 greenlet = "*"
 pycurl = "*"
