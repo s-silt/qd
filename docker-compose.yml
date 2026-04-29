@@ -96,6 +96,31 @@ services:
       # - AI_MODEL=gpt-4o-mini
       # - AI_TIMEOUT=60
       # - AI_MAX_HAR_ENTRIES=60
+      # URL 自动抓包 (Playwright sidecar)
+      # 启用下方 playwright (Python ~1.5GB) 或 playwright-go (~250MB) 之一
+      # - PLAYWRIGHT_SIDECAR_URL=http://playwright:8924
+      # - PLAYWRIGHT_CAPTURE_TIMEOUT=120
+
+  # Playwright Python 版 sidecar (~1.5GB, 完整 HAR 字段)
+  # playwright:
+  #   build:
+  #     context: ./services/playwright
+  #   shm_size: 1gb
+  #   expose: ["8924"]
+  #   environment:
+  #     - HEADLESS=true
+  #     - MAX_CONCURRENT=2
+
+  # Playwright Go 版 sidecar (~250MB, 启动快, HAR 字段稍简)
+  # 二选一启用; 要用 Go 版就把 PLAYWRIGHT_SIDECAR_URL 指向 http://playwright-go:8924
+  # playwright-go:
+  #   build:
+  #     context: ./services/playwright-go
+  #   shm_size: 1gb
+  #   expose: ["8924"]
+  #   environment:
+  #     - HEADLESS=true
+  #     - MAX_CONCURRENT=2
 
   redis:
     image: redis:alpine
