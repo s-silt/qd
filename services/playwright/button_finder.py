@@ -25,12 +25,42 @@ KEYWORDS_NEGATIVE = [
     "login", "logout", "register", "sign up", "signup",
 ]
 
-# 找候选按钮的 JS 脚本: 在浏览器内执行
+# 找候选按钮的 JS 脚本: 在浏览器内执行。
+# selector 优先级 (越靠前越稳定, SPA 下重渲染也能命中):
+#   1. data-testid="xxx"      <- 测试属性, 最稳
+#   2. #cssEscapedId          <- 唯一 id
+#   3. [name="xxx"]           <- 表单元素 name
+#   4. nth-of-type 路径 (最多 4 层) <- 兜底, 仅适合静态站点
 JS_FIND_CANDIDATES = """
 () => {
+    const MAX_DEPTH = 4;
     const candidates = [];
     const seen = new Set();
     const selectors = ['button', 'a', '[role="button"]', 'input[type="submit"]', 'input[type="button"]'];
+    function buildSelector(el) {
+        const testid = el.getAttribute && el.getAttribute('data-testid');
+        if (testid) return `[data-testid="${CSS.escape(testid)}"]`;
+        if (el.id) return '#' + CSS.escape(el.id);
+        const name = el.getAttribute && el.getAttribute('name');
+        if (name && (el.tagName === 'INPUT' || el.tagName === 'BUTTON')) {
+            return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+        }
+        // 兜底: nth-of-type 路径, 限制 4 层
+        let cur = el;
+        const parts = [];
+        for (let depth = 0; depth < MAX_DEPTH && cur && cur.nodeType === 1 && cur.tagName !== 'HTML'; depth++) {
+            const tag = cur.tagName.toLowerCase();
+            let nth = 1;
+            let sib = cur.previousElementSibling;
+            while (sib) {
+                if (sib.tagName === cur.tagName) nth++;
+                sib = sib.previousElementSibling;
+            }
+            parts.unshift(`${tag}:nth-of-type(${nth})`);
+            cur = cur.parentElement;
+        }
+        return parts.join(' > ');
+    }
     for (const sel of selectors) {
         for (const el of document.querySelectorAll(sel)) {
             if (seen.has(el)) continue;
@@ -42,31 +72,17 @@ JS_FIND_CANDIDATES = """
             if (!visible) continue;
             const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim();
             if (!text) continue;
-            // 给元素一个稳定 selector 标识, 优先用 id 否则按结构定位
-            let path = '';
-            if (el.id) {
-                path = '#' + CSS.escape(el.id);
-            } else {
-                // 走 nth-of-type 层级路径, 控制深度避免无限长
-                let cur = el;
-                const parts = [];
-                for (let depth = 0; depth < 6 && cur && cur.nodeType === 1 && cur.tagName !== 'HTML'; depth++) {
-                    const tag = cur.tagName.toLowerCase();
-                    let nth = 1;
-                    let sib = cur.previousElementSibling;
-                    while (sib) {
-                        if (sib.tagName === cur.tagName) nth++;
-                        sib = sib.previousElementSibling;
-                    }
-                    parts.unshift(`${tag}:nth-of-type(${nth})`);
-                    cur = cur.parentElement;
-                }
-                path = parts.join(' > ');
-            }
+            const path = buildSelector(el);
+            // 标记 selector 稳定性, 让 UI 提示用户
+            let quality = 'fragile';
+            if (path.startsWith('[data-testid=')) quality = 'stable';
+            else if (path.startsWith('#')) quality = 'stable';
+            else if (path.includes('[name=')) quality = 'medium';
             candidates.push({
                 text: text.slice(0, 100),
                 tag: el.tagName.toLowerCase(),
                 selector: path,
+                quality: quality,
                 href: el.tagName === 'A' ? (el.href || '') : '',
             });
         }

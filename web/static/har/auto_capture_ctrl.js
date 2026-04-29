@@ -54,10 +54,7 @@
         $scope.error = '';
         $scope.result = null;
         $scope.candidates = [];
-        var btn = $('#auto-capture .btn-primary');
-        btn.button('loading');
         $http.post('/har/auto_capture', payload).then(function(res) {
-          btn.button('reset');
           $scope.busy = false;
           if (!res.data || !res.data.ok) {
             $scope.error = (res.data && res.data.error) || '抓包失败';
@@ -67,7 +64,6 @@
           $scope.result = res.data;
           $scope.candidates = res.data.candidates || [];
         }, function(res) {
-          btn.button('reset');
           $scope.busy = false;
           $scope.error = (res && res.data && res.data.error) || ('HTTP ' + (res && res.status));
         });

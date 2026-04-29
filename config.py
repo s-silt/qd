@@ -343,6 +343,12 @@ ai_timeout = int(os.getenv("AI_TIMEOUT", "60"))  # AI 请求超时时间(秒)
 ai_max_har_entries = int(
     os.getenv("AI_MAX_HAR_ENTRIES", "60")
 )  # AI 分析时单个 HAR 文件最多保留的请求数, 防止 token 超限
+ai_har_body_truncate_bytes = int(
+    os.getenv("AI_HAR_BODY_TRUNCATE_BYTES", "500")
+)  # 单条请求 body / 响应内容超过此字节数会被截断, 仅影响送给 AI 的文本
+ai_har_header_truncate_bytes = int(
+    os.getenv("AI_HAR_HEADER_TRUNCATE_BYTES", "200")
+)  # 单个 header value 超过此字节数会被截断
 
 # Playwright sidecar 自动抓 HAR 设置
 # 部署 services/playwright 容器后, 通过此 URL 调用其 /capture 端点

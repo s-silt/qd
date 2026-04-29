@@ -64,6 +64,42 @@ class TestPickButton(unittest.TestCase):
         # 立即签到 (high) > 打卡 (high) 但前者更具体
         self.assertEqual(chosen["text"], "立即签到")
 
+    def test_quality_field_passes_through(self):
+        # 候选保留 quality 字段, 让 UI 提示稳定性
+        cands = [
+            {"text": "立即签到", "tag": "button", "selector": "[data-testid=\"sign\"]",
+             "quality": "stable", "href": ""},
+            {"text": "打卡", "tag": "a", "selector": "body > div:nth-of-type(3) > a:nth-of-type(1)",
+             "quality": "fragile", "href": ""},
+        ]
+        chosen, top = pick_button(cands)
+        self.assertEqual(chosen["text"], "立即签到")
+        self.assertEqual(chosen["quality"], "stable")
+        # top 列表保留 quality
+        self.assertIn("quality", top[0])
+
+
+class TestJSCandidatesScript(unittest.TestCase):
+    """对 JS_FIND_CANDIDATES 文本做静态检查, 确保关键改动不被无意删除。"""
+
+    def test_uses_data_testid_first(self):
+        from button_finder import JS_FIND_CANDIDATES
+        # data-testid 必须在 id 之前匹配
+        idx_testid = JS_FIND_CANDIDATES.find("data-testid")
+        idx_id = JS_FIND_CANDIDATES.find("el.id")
+        self.assertGreater(idx_testid, 0)
+        self.assertLess(idx_testid, idx_id)
+
+    def test_max_depth_4(self):
+        from button_finder import JS_FIND_CANDIDATES
+        self.assertIn("MAX_DEPTH = 4", JS_FIND_CANDIDATES)
+
+    def test_emits_quality_field(self):
+        from button_finder import JS_FIND_CANDIDATES
+        self.assertIn("quality", JS_FIND_CANDIDATES)
+        self.assertIn("'stable'", JS_FIND_CANDIDATES)
+        self.assertIn("'fragile'", JS_FIND_CANDIDATES)
+
 
 class TestParseCookieStr(unittest.TestCase):
     def test_basic(self):

@@ -343,13 +343,16 @@
               <li class="list-group-item" ng-repeat="c in candidates" style="padding:6px 10px">
                 <a href="javascript:void(0)" ng-click="use_candidate_selector(c)">{{ c.text }}</a>
                 <small class="text-muted">{{ c.tag }} · score {{ c._score }} · <code>{{ c.selector }}</code></small>
+                <span ng-if="c.quality === 'stable'" class="label label-success" style="margin-left:6px">稳定</span>
+                <span ng-if="c.quality === 'medium'" class="label label-info" style="margin-left:6px">一般</span>
+                <span ng-if="c.quality === 'fragile'" class="label label-warning" style="margin-left:6px" title="DOM 结构改变后 selector 可能失效">脆弱</span>
               </li>
             </ul>
           </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
-          <button type="button" class="btn btn-primary" data-loading-text="抓包中..." ng-disabled="!enabled || busy" ng-click="run()">开始抓包</button>
+          <button type="button" class="btn btn-primary" ng-disabled="!enabled || busy" ng-click="run()">{{ busy ? '抓包中...' : '开始抓包' }}</button>
           <button type="button" class="btn btn-success" ng-if="result && result.ok" ng-click="apply()">应用为当前模板</button>
         </div>
       </div>
@@ -386,7 +389,7 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
-          <button type="button" class="btn btn-primary" data-loading-text="分析中..." ng-disabled="!ai_enabled" ng-click="run()">开始分析</button>
+          <button type="button" class="btn btn-primary" ng-disabled="!ai_enabled || busy" ng-click="run()">{{ busy ? '分析中...' : '开始分析' }}</button>
           <button type="button" class="btn btn-success" ng-if="result" ng-click="apply()">应用为当前模板</button>
         </div>
       </div>
