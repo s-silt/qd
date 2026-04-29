@@ -190,27 +190,32 @@ async def _find_and_click(page, hint: str, actions: List[Dict[str, Any]]):
     return True, chosen, top
 
 
-@app.post("/capture", response_model=CaptureResponse)
-async def capture(req: CaptureRequest) -> CaptureResponse:
-    if not _browser or not _browser.is_connected():
-        raise HTTPException(503, "Browser not ready")
+async def perform_capture(
+    browser: Browser,
+    req: CaptureRequest,
+    semaphore: Optional[asyncio.Semaphore] = None,
+) -> CaptureResponse:
+    """核心抓包逻辑, 不依赖全局状态, 便于集成测试。
 
+    Args:
+        browser: Playwright 已启动的 Browser 实例
+        req: CaptureRequest pydantic 模型
+        semaphore: 可选并发限流; 若 None 则不限流
+    """
     started = time.time()
     actions: List[Dict[str, Any]] = []
 
     storage_state = req.storage_state
     if not storage_state and req.cookies:
         storage_state = _parse_cookie_str_to_storage_state(req.cookies, req.url)
-    # 安全: 剔除与请求 URL host 不匹配的跨域 cookie / origin
     if storage_state:
         storage_state = _sanitize_storage_state(storage_state, req.url)
 
-    # 写到临时文件: Playwright 接受 storage_state=path 或 dict
     har_fd, har_path = tempfile.mkstemp(suffix=".har", prefix="qd_capture_")
     os.close(har_fd)
 
-    async with _semaphore:  # type: ignore[union-attr]
-        context = await _browser.new_context(
+    async def _run() -> CaptureResponse:
+        context = await browser.new_context(
             user_agent=req.user_agent or DEFAULT_UA,
             viewport=req.viewport or {"width": 1280, "height": 800},
             locale=req.locale,
@@ -229,13 +234,11 @@ async def capture(req: CaptureRequest) -> CaptureResponse:
                 await page.goto(req.url, wait_until="domcontentloaded", timeout=req.timeout_ms)
             except PlaywrightTimeout:
                 actions.append({"type": "navigate_timeout"})
-            # 等网络空闲一段（不强制全静止, 部分站点有长轮询）
             try:
                 await page.wait_for_load_state("networkidle", timeout=10000)
             except PlaywrightTimeout:
                 pass
 
-            # 检测是否被踢到登录页（storage_state 失效）
             current = page.url
             if re.search(r"login|signin|sign-in|auth", current, re.I) and not re.search(
                 r"login|signin|sign-in|auth", req.url, re.I
@@ -248,7 +251,6 @@ async def capture(req: CaptureRequest) -> CaptureResponse:
                     elapsed_ms=int((time.time() - started) * 1000),
                 )
 
-            # 1. 用户给了 selector 直接点
             if req.selector:
                 try:
                     await page.click(req.selector, timeout=10000)
@@ -264,7 +266,6 @@ async def capture(req: CaptureRequest) -> CaptureResponse:
                         elapsed_ms=int((time.time() - started) * 1000),
                     )
             else:
-                # 2. 启发式
                 clicked, chosen, candidates = await _find_and_click(
                     page, req.hint or "", actions
                 )
@@ -278,7 +279,6 @@ async def capture(req: CaptureRequest) -> CaptureResponse:
                         elapsed_ms=int((time.time() - started) * 1000),
                     )
 
-            # 等点击后的请求完成
             await asyncio.sleep(req.wait_after_click_ms / 1000)
             try:
                 await page.wait_for_load_state("networkidle", timeout=5000)
@@ -287,7 +287,6 @@ async def capture(req: CaptureRequest) -> CaptureResponse:
 
             await context.close()
 
-            # 读出 HAR
             with open(har_path, "r", encoding="utf-8") as f:
                 har_data = json.load(f)
 
@@ -316,3 +315,15 @@ async def capture(req: CaptureRequest) -> CaptureResponse:
                 os.unlink(har_path)
             except OSError:
                 pass
+
+    if semaphore is not None:
+        async with semaphore:
+            return await _run()
+    return await _run()
+
+
+@app.post("/capture", response_model=CaptureResponse)
+async def capture(req: CaptureRequest) -> CaptureResponse:
+    if not _browser or not _browser.is_connected():
+        raise HTTPException(503, "Browser not ready")
+    return await perform_capture(_browser, req, semaphore=_semaphore)
