@@ -82,7 +82,7 @@
 打开 DevTools（`F12`）→ **Application** 选项卡 → 左侧 **Storage → Cookies → 站点 URL**：
 
 - **简单做法**：右键 → "Copy all as cURL"，从 cURL 命令里复制 `Cookie:` 头那一行
-- **干净做法**：用 [QD get-cookies 浏览器扩展](https://github.com/qd-today/get-cookies)（仓库已自带集成），点一下导出标准格式
+- **干净做法**：安装 [qd-today/get-cookies](https://github.com/qd-today/get-cookies) 浏览器扩展（仓库自行下载安装，不随 QD 一起分发），登录目标站点后在 QD 测试面板点"获取"按钮即可一键导出标准格式 cookie 字符串
 
 ### 第 3 步：使用 QD 自动抓包
 
