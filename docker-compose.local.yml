@@ -59,8 +59,13 @@ services:
       - ./redis/data:/data:rw
     restart: unless-stopped
 
-  # Playwright sidecar - 提供 URL → HAR 自动抓包能力
-  # 镜像约 1.5GB, 不需要时可整段注释掉
+  # ─── URL 自动抓包 sidecar (二选一) ────────────────────────────────
+  # 两个版本接口完全兼容, QD 主端用 PLAYWRIGHT_SIDECAR_URL 选择即可。
+  # 默认启用 Python 版 (功能最完整), 想用更轻量的 Go 版就改 QD 的
+  # PLAYWRIGHT_SIDECAR_URL=http://playwright-go:8924, 把 playwright 段
+  # 注释掉, 取消 playwright-go 段的注释。
+
+  # Playwright Python 版 - 镜像约 1.5GB, 完整 HAR 字段, 支持 locale/timezone
   playwright:
     build:
       context: ./services/playwright
@@ -69,11 +74,28 @@ services:
     container_name: qd-playwright
     environment:
       - HEADLESS=true
-      - MAX_CONCURRENT=2          # 同时跑的浏览器会话数
-      - DEFAULT_TIMEOUT_MS=60000  # 单次抓包超时 ms
-      # - ALLOW_HOSTS=example.com,foo.com  # host 白名单, 留空允许全部
-    shm_size: 1gb                  # 给 Chromium 共享内存, 避免 OOM
-    # 不对外暴露端口, QD 容器内通过 service name "playwright" 访问即可
+      - MAX_CONCURRENT=2
+      - DEFAULT_TIMEOUT_MS=60000
+      # - ALLOW_HOSTS=example.com,foo.com
+    shm_size: 1gb
     expose:
       - "8924"
     restart: unless-stopped
+
+  # Playwright Go 版 - 镜像约 250MB, 启动快, HAR 字段稍简
+  # 想用 Go 版: 取消注释, 同时把上面 playwright 段注释掉
+  # playwright-go:
+  #   build:
+  #     context: ./services/playwright-go
+  #     dockerfile: Dockerfile
+  #   image: s-silt/qd-playwright-go:local
+  #   container_name: qd-playwright-go
+  #   environment:
+  #     - HEADLESS=true
+  #     - MAX_CONCURRENT=2
+  #     - DEFAULT_TIMEOUT_MS=60000
+  #     # - ALLOW_HOSTS=example.com,foo.com
+  #   shm_size: 1gb
+  #   expose:
+  #     - "8924"
+  #   restart: unless-stopped
