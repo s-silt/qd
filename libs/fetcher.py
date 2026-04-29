@@ -42,7 +42,7 @@ if config.use_pycurl:
 else:
     pycurl = None  # pylint: disable=invalid-name
 local_host = f"http://{config.bind}:{config.port}".replace("0.0.0.0", "localhost")
-NOT_RETYR_CODE = config.not_retry_code
+NOT_RETRY_CODE = config.not_retry_code
 
 
 class Fetcher(object):
@@ -604,7 +604,7 @@ class Fetcher(object):
                             curl_content_length=False,
                         )
                         e.response = await self.client.fetch(req)
-                    elif e.code not in NOT_RETYR_CODE or (
+                    elif e.code not in NOT_RETRY_CODE or (
                         empty_retry and not e.response
                     ):
                         try:
