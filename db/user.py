@@ -179,14 +179,14 @@ class User(BaseDB, AlchemyMixin):
 
     async def get(self, id=None, email=None, fields=None, one_or_none=False, first=True, to_dict=True, sql_session=None):
         if fields is None:
-            _fields = User
+            _fields = [User]
         else:
-            _fields = (getattr(User, field) for field in fields)
+            _fields = [getattr(User, field) for field in fields]
 
         if id:
-            smtm = select(_fields).where(User.id == id)
+            smtm = select(*_fields).where(User.id == id)
         elif email:
-            smtm = select(_fields).where(User.email == email)
+            smtm = select(*_fields).where(User.email == email)
         else:
             raise self.UserDBException('get user need id or email')
 
@@ -197,11 +197,11 @@ class User(BaseDB, AlchemyMixin):
 
     async def list(self, fields=None, limit=None, to_dict=True, sql_session=None, **kwargs):
         if fields is None:
-            _fields = User
+            _fields = [User]
         else:
-            _fields = (getattr(User, field) for field in fields)
+            _fields = [getattr(User, field) for field in fields]
 
-        smtm = select(_fields)
+        smtm = select(*_fields)
 
         for key, value in kwargs.items():
             smtm = smtm.where(getattr(User, key) == value)

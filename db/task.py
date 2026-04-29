@@ -79,11 +79,10 @@ class Task(BaseDB, AlchemyMixin):
     async def get(self, id, fields=None, one_or_none=False, first=True, to_dict=True, sql_session=None):
         assert id, 'need id'
         if fields is None:
-            _fields = Task
+            smtm = select(Task).where(Task.id == id)
         else:
-            _fields = (getattr(Task, field) for field in fields)
-
-        smtm = select(_fields).where(Task.id == id)
+            _fields = [getattr(Task, field) for field in fields]
+            smtm = select(*_fields).where(Task.id == id)
 
         result = await self._get(smtm, one_or_none=one_or_none, first=first, sql_session=sql_session)
         if to_dict and result is not None:
@@ -92,11 +91,11 @@ class Task(BaseDB, AlchemyMixin):
 
     async def list(self, userid=None, fields=None, limit=1000, to_dict=True, scan=False, scan_time=None, sql_session=None, **kwargs):
         if fields is None:
-            _fields = Task
+            _fields = [Task]
         else:
-            _fields = (getattr(Task, field) for field in fields)
+            _fields = [getattr(Task, field) for field in fields]
 
-        smtm = select(_fields)
+        smtm = select(*_fields)
         if userid is not None:
             smtm = smtm.where(Task.userid == userid)
 
