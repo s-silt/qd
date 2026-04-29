@@ -375,3 +375,77 @@ async def dddd_slide_post(request: Request):
     return JSONResponse(
         content=json.loads(json.dumps(rtv, ensure_ascii=False))
     )
+
+
+# ── /util/image ──────────────────────────────────────────────────────────────
+# Image fetch / proxy endpoint.  Accepts a base64-encoded image (img=) or a
+# remote URL (imgurl=) and returns the raw image bytes.  Content-Type is
+# detected from the first few bytes; falls back to application/octet-stream.
+
+def _detect_media_type(data: bytes) -> str:
+    """Sniff the MIME type from the first few bytes."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "application/octet-stream"
+
+
+@router.get("/util/image")
+async def util_image_get(
+    img: str = Query(default=""),
+    imgurl: str = Query(default=""),
+):
+    """
+    GET: return raw image bytes from a base64 string or remote URL.
+
+    Parameters
+    ----------
+    img:
+        Base64-encoded image data, or an HTTP(S) URL of the image.
+    imgurl:
+        HTTP(S) URL of the image (alternative to ``img``).
+    """
+    from fastapi.responses import Response  # noqa: PLC0415
+
+    try:
+        data = await _get_img(img, imgurl)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(content=data, media_type=_detect_media_type(data))
+
+
+@router.post("/util/image")
+async def util_image_post(request: Request):
+    """
+    POST: return raw image bytes from a base64 string or remote URL.
+
+    Accepts JSON body (``{"img": "...", "imgurl": "..."}``).
+    """
+    from fastapi.responses import Response  # noqa: PLC0415
+
+    try:
+        content_type = request.headers.get("Content-Type", "")
+        if content_type.startswith("application/json"):
+            body_dict = await request.json()
+            img = body_dict.get("img", "")
+            imgurl = body_dict.get("imgurl", "")
+        else:
+            form = await request.form()
+            img = form.get("img", "")
+            imgurl = form.get("imgurl", "")
+
+        data = await _get_img(img, imgurl)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(content=data, media_type=_detect_media_type(data))
