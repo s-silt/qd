@@ -1,0 +1,466 @@
+{% extends "base.html" %}
+
+{% block head %}
+<title>获取 Cookie - QD</title>
+<style>
+:root {
+    --primary: #10b981;
+    --primary-hover: #059669;
+    --primary-light: #d1fae5;
+    --danger: #ef4444;
+    --danger-light: #fee2e2;
+    --gray-50: #f9fafb;
+    --gray-100: #f3f4f6;
+    --gray-200: #e5e7eb;
+    --gray-300: #d1d5db;
+    --gray-500: #6b7280;
+    --gray-700: #374151;
+    --gray-900: #111827;
+    --radius: 8px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--gray-50);
+    color: var(--gray-900);
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 720px;
+    margin: 40px auto;
+    padding: 0 20px;
+}
+
+.card {
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 32px;
+    margin-bottom: 24px;
+}
+
+.card-header {
+    margin-bottom: 24px;
+}
+
+.card-header h2 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--gray-900);
+    margin-bottom: 8px;
+}
+
+.card-header p {
+    color: var(--gray-500);
+    font-size: 14px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--gray-700);
+    margin-bottom: 6px;
+}
+
+.form-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--radius);
+    font-size: 14px;
+    color: var(--gray-900);
+    background: white;
+    transition: all 0.2s;
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.form-input::placeholder {
+    color: var(--gray-500);
+}
+
+.help-text {
+    font-size: 12px;
+    color: var(--gray-500);
+    margin-top: 4px;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-hover);
+}
+
+.btn-primary:disabled {
+    background: var(--gray-300);
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    background: var(--gray-100);
+    color: var(--gray-700);
+    border: 1px solid var(--gray-300);
+}
+
+.btn-secondary:hover {
+    background: var(--gray-200);
+}
+
+.btn-block {
+    width: 100%;
+}
+
+.alert {
+    padding: 16px;
+    border-radius: var(--radius);
+    margin-top: 20px;
+    display: none;
+}
+
+.alert.show {
+    display: block;
+}
+
+.alert-success {
+    background: var(--primary-light);
+    border: 1px solid #6ee7b7;
+    color: #065f46;
+}
+
+.alert-error {
+    background: var(--danger-light);
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+}
+
+.alert h4 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.alert p {
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.cookie-box {
+    margin-top: 16px;
+}
+
+.cookie-box label {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--gray-700);
+    margin-bottom: 6px;
+}
+
+.cookie-output {
+    width: 100%;
+    min-height: 120px;
+    padding: 12px;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--radius);
+    font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Mono", monospace;
+    font-size: 13px;
+    color: var(--gray-900);
+    background: var(--gray-50);
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.cookie-output:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.btn-group {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.loading-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+
+.status-dot.success {
+    background: var(--primary);
+}
+
+.status-dot.error {
+    background: var(--danger);
+}
+
+.features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+}
+
+.feature-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    background: var(--gray-50);
+    border-radius: var(--radius);
+}
+
+.feature-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary-light);
+    border-radius: var(--radius);
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.feature-text h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--gray-900);
+    margin-bottom: 4px;
+}
+
+.feature-text p {
+    font-size: 12px;
+    color: var(--gray-500);
+}
+</style>
+{% end %}
+
+{% block body %}
+<div class="container">
+    <div class="card">
+        <div class="card-header">
+            <h2>获取网站 Cookie</h2>
+            <p>自动打开浏览器，登录后一键获取 Cookie</p>
+        </div>
+
+        <div class="form-group">
+            <label for="url">目标网址</label>
+            <input type="text" id="url" class="form-input" placeholder="https://example.com" />
+            <div class="help-text">输入需要获取 Cookie 的网站地址</div>
+        </div>
+
+        <div class="form-group">
+            <label for="user_agent">User-Agent（可选）</label>
+            <input type="text" id="user_agent" class="form-input" placeholder="留空使用默认 UA" />
+            <div class="help-text">某些网站会验证 UA，如需指定请填写</div>
+        </div>
+
+        <button class="btn btn-primary btn-block" id="startBtn" onclick="startCapture()">
+            <span id="btnText">打开浏览器并获取 Cookie</span>
+            <span id="btnLoading" style="display:none;">
+                <span class="loading-spinner"></span> 正在处理...
+            </span>
+        </button>
+
+        <div class="alert" id="alert">
+            <h4 id="alertTitle"></h4>
+            <div id="alertContent"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">功能说明</h3>
+        <div class="features">
+            <div class="feature-item">
+                <div class="feature-icon">🔐</div>
+                <div class="feature-text">
+                    <h4>安全可靠</h4>
+                    <p>本地浏览器运行，Cookie 不上传服务器</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon">⚡</div>
+                <div class="feature-text">
+                    <h4>一键获取</h4>
+                    <p>自动识别域名，提取有效 Cookie</p>
+                </div>
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon">🎯</div>
+                <div class="feature-text">
+                    <h4>精准匹配</h4>
+                    <p>只获取目标站点的 Cookie，排除无关项</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function startCapture() {
+    const url = document.getElementById('url').value.trim();
+    const userAgent = document.getElementById('user_agent').value.trim();
+
+    if (!url) {
+        showAlert('error', '请输入网址', '请填写需要获取 Cookie 的网站地址');
+        return;
+    }
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        showAlert('error', '网址格式错误', '网址必须以 http:// 或 https:// 开头');
+        return;
+    }
+
+    const startBtn = document.getElementById('startBtn');
+    const btnText = document.getElementById('btnText');
+    const btnLoading = document.getElementById('btnLoading');
+    const alert = document.getElementById('alert');
+
+    startBtn.disabled = true;
+    btnText.style.display = 'none';
+    btnLoading.style.display = 'inline-flex';
+    alert.classList.remove('show', 'alert-success', 'alert-error');
+
+    try {
+        const response = await fetch('/get_cookies', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                url: url,
+                user_agent: userAgent || null
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+            let html = `
+                <p><span class="status-dot success"></span>域名：${data.domain}</p>
+                <p><span class="status-dot success"></span>获取到 ${data.cookie_count} 个 Cookie</p>
+                <p><span class="status-dot success"></span>耗时：${(data.elapsed_ms / 1000).toFixed(1)} 秒</p>
+            `;
+
+            if (data.cookie_count > 0) {
+                html += `
+                    <div class="cookie-box">
+                        <label>Cookie 字符串：</label>
+                        <textarea class="cookie-output" id="cookieOutput" readonly>${escapeHtml(data.cookies)}</textarea>
+                        <div class="btn-group">
+                            <button class="btn btn-primary" onclick="copyCookie()">复制 Cookie</button>
+                            <button class="btn btn-secondary" onclick="useCookie()">用于创建模板</button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            showAlert('success', '获取成功！', html);
+        } else {
+            showAlert('error', '获取失败', `<p>${escapeHtml(data.error || '未知错误')}</p>`);
+        }
+    } catch (error) {
+        showAlert('error', '请求失败', `<p>${escapeHtml(error.message)}</p>`);
+    } finally {
+        startBtn.disabled = false;
+        btnText.style.display = 'inline';
+        btnLoading.style.display = 'none';
+    }
+}
+
+function showAlert(type, title, content) {
+    const alert = document.getElementById('alert');
+    alert.className = `alert show alert-${type}`;
+    document.getElementById('alertTitle').textContent = title;
+    document.getElementById('alertContent').innerHTML = content;
+}
+
+function copyCookie() {
+    const cookieOutput = document.getElementById('cookieOutput');
+    cookieOutput.select();
+    cookieOutput.setSelectionRange(0, 99999);
+
+    navigator.clipboard.writeText(cookieOutput.value).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = '已复制！';
+        btn.style.background = '#059669';
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.style.background = '';
+        }, 2000);
+    }).catch(() => {
+        document.execCommand('copy');
+    });
+}
+
+function useCookie() {
+    const cookieOutput = document.getElementById('cookieOutput');
+    const cookie = cookieOutput.value;
+
+    // 跳转到 HAR 编辑器，并传递 cookie
+    const url = document.getElementById('url').value.trim();
+    window.location.href = `/har/edit?url=${encodeURIComponent(url)}&cookie=${encodeURIComponent(cookie)}`;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% end %}
