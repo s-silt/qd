@@ -234,3 +234,165 @@ async def util_urldecode(
     except Exception as e:
         rtv["状态"] = str(e)
     return _json_response(rtv)
+
+
+# ---------------------------------------------------------------------------
+# AES encrypt / decrypt
+# ---------------------------------------------------------------------------
+
+try:
+    from libs._utils.crypto import _aes_encrypt, _aes_decrypt
+    _AES_AVAILABLE = True
+except ImportError:
+    _AES_AVAILABLE = False
+    _aes_encrypt = None  # type: ignore
+    _aes_decrypt = None  # type: ignore
+
+
+@router.get("/util/aes/encrypt")
+@router.post("/util/aes/encrypt")
+async def util_aes_encrypt(
+    word: str = Query(default=""),
+    key: str = Query(default=""),
+    mode: str = Query(default="CBC"),
+    iv: Optional[str] = Query(default=None),
+    output_format: str = Query(default="base64"),
+    padding: str = Query(default="true"),
+    padding_style: str = Query(default="pkcs7"),
+):
+    """AES encryption endpoint."""
+    rtv: dict = {}
+    try:
+        if not _AES_AVAILABLE:
+            raise ImportError("PyCryptodome not installed")
+        if not word or not key:
+            raise ValueError("word and key are required")
+        result = _aes_encrypt(
+            word, key,
+            mode=mode,
+            iv=iv,
+            output_format=output_format,
+            padding=bool(strtobool(padding)),
+            padding_style=padding_style,
+        )
+        rtv["result"] = result
+        rtv["状态"] = "200"
+    except Exception as e:
+        rtv["状态"] = str(e)
+    return _json_response(rtv)
+
+
+@router.get("/util/aes/decrypt")
+@router.post("/util/aes/decrypt")
+async def util_aes_decrypt(
+    word: str = Query(default=""),
+    key: str = Query(default=""),
+    mode: str = Query(default="CBC"),
+    iv: Optional[str] = Query(default=None),
+    input_format: str = Query(default="base64"),
+    padding: str = Query(default="true"),
+    padding_style: str = Query(default="pkcs7"),
+):
+    """AES decryption endpoint."""
+    rtv: dict = {}
+    try:
+        if not _AES_AVAILABLE:
+            raise ImportError("PyCryptodome not installed")
+        if not word or not key:
+            raise ValueError("word and key are required")
+        result = _aes_decrypt(
+            word, key,
+            mode=mode,
+            iv=iv,
+            input_format=input_format,
+            padding=bool(strtobool(padding)),
+            padding_style=padding_style,
+        )
+        rtv["result"] = result
+        rtv["状态"] = "200"
+    except Exception as e:
+        rtv["状态"] = str(e)
+    return _json_response(rtv)
+
+
+# ---------------------------------------------------------------------------
+# Base64 encode / decode
+# ---------------------------------------------------------------------------
+
+@router.get("/util/base64/encode")
+@router.post("/util/base64/encode")
+async def util_base64_encode(
+    content: str = Query(default=""),
+    encoding: str = Query(default="utf-8"),
+):
+    """Base64 encode."""
+    rtv: dict = {}
+    try:
+        encoded = base64.b64encode(content.encode(encoding)).decode("utf-8")
+        rtv["result"] = encoded
+        rtv["状态"] = "200"
+    except Exception as e:
+        rtv["状态"] = str(e)
+    return _json_response(rtv)
+
+
+@router.get("/util/base64/decode")
+@router.post("/util/base64/decode")
+async def util_base64_decode(
+    content: str = Query(default=""),
+    encoding: str = Query(default="utf-8"),
+):
+    """Base64 decode."""
+    rtv: dict = {}
+    try:
+        decoded = base64.b64decode(content.encode("utf-8")).decode(encoding)
+        rtv["result"] = decoded
+        rtv["状态"] = "200"
+    except Exception as e:
+        rtv["状态"] = str(e)
+    return _json_response(rtv)
+
+
+# ---------------------------------------------------------------------------
+# Regex / string tools
+# ---------------------------------------------------------------------------
+
+@router.get("/util/regex")
+@router.post("/util/regex")
+async def util_regex(
+    data: str = Query(default=""),
+    p: str = Query(default=""),
+):
+    """Regex findall (mirrors UtilRegexHandler)."""
+    rtv: dict = {}
+    try:
+        temp: dict = {}
+        ds = re.findall(p, data, re.IGNORECASE)
+        for cnt, d in enumerate(ds):
+            temp[cnt + 1] = d
+        rtv["数据"] = temp
+        rtv["状态"] = "OK"
+    except Exception as e:
+        rtv["状态"] = str(e)
+    return _json_response(rtv)
+
+
+@router.get("/util/string/replace")
+@router.post("/util/string/replace")
+async def util_string_replace(
+    s: str = Query(default=""),
+    p: str = Query(default=""),
+    t: str = Query(default=""),
+    r: str = Query(default=""),
+):
+    """Regex replace (mirrors UtilStrReplaceHandler)."""
+    rtv: dict = {}
+    try:
+        rtv["原始字符串"] = s
+        rtv["处理后字符串"] = re.sub(p, t, s)
+        rtv["状态"] = "OK"
+        if r == "text":
+            return PlainTextResponse(html.escape(rtv["处理后字符串"]))
+    except Exception as e:
+        rtv["状态"] = str(e)
+    return _json_response(rtv)
