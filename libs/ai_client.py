@@ -211,33 +211,156 @@ def preprocess_har(
 
 # ---------- Prompt 构造 ---------- #
 
-_SYSTEM_PROMPT = """你是一个 HTTP 抓包分析助手。用户会给你一个浏览器抓包的 HAR 精简数据，
-你的任务是从中识别出"签到 / 打卡 / check-in"操作真正发起的关键请求（通常只有 1-3 条），
-忽略静态资源、心跳、埋点、广告、首页拉取等。
+_SYSTEM_PROMPT = """你是一个 QD 签到模板生成助手。用户会给你一个浏览器抓包的 HAR 精简数据，
+你的任务是：
+1. 从中识别出"签到 / 打卡 / check-in"操作的关键请求
+2. 生成完整的 QD 框架可直接导入的模板
 
-只输出严格 JSON，不要 markdown 包裹，不要解释，结构如下：
+## QD 模板格式说明
+
+模板是一个 JSON 数组，每个元素是一个请求步骤，包含：
+- `comment` (可选): 步骤说明
+- `request`: 请求详情
+  - `method`: GET/POST
+  - `url`: 请求 URL，支持 `{{变量名}}` 模板语法
+  - `headers`: 请求数组 `[{"name": "Header-Name", "value": "header-value"}]`
+  - `cookies`: 通常为空数组 `[]`
+  - `data`: POST 数据字符串（如果是 POST 请求）
+  - `mimeType`: 如 "application/json" 或 "application/x-www-form-urlencoded"
+- `rule`: 规则
+  - `success_asserts`: 成功断言数组，每项 `{"re": "正则或状态码", "from": "status|content|header"}`
+  - `failed_asserts`: 失败断言数组（可选）
+  - `extract_variables`: 提取变量数组，每项 `{"name": "变量名", "re": "正则(含捕获组)", "from": "content"}`
+
+## 变量系统
+- 用户需要提供的变量用 `{{变量名}}` 表示，如 `{{cookie}}`、`{{token}}`
+- 从响应中提取的变量通过 `extract_variables` 定义，后续步骤可用 `{{变量名}}` 引用
+- 特殊变量 `__log__`: 用于输出签到结果日志，QD 会自动读取并显示
+
+## 日志输出（重要！）
+
+日志显示在 QD 界面的"任务日志"中，必须正确设置 `__log__` 变量。
+
+### 方式一：直接提取（响应中有完整消息）
+如果签到响应包含完整提示消息（如 `"msg":"签到成功，积分+10"`），直接提取：
+```json
 {
-  "sitename": "站点名称（猜测）",
+  "name": "__log__",
+  "re": "\"msg\":\"(.+?)\"",
+  "from": "content"
+}
+```
+
+### 方式二：拼接变量（推荐，可定制格式）
+如果需要组合多个变量，使用 `api://util/unicode` 拼接：
+```json
+{
+  "request": {
+    "method": "POST",
+    "url": "api://util/unicode",
+    "headers": [],
+    "cookies": [],
+    "data": "content=用户名：{{username}} 用户ID：{{uid}} 签到时间：{{time}} 获得积分：{{points}} 总积分：{{total}}"
+  },
+  "rule": {
+    "success_asserts": [{"re": "200", "from": "status"}],
+    "failed_asserts": [],
+    "extract_variables": [
+      {"name": "__log__", "re": "\"转换后\": \"(.*)\"", "from": "content"}
+    ]
+  }
+}
+```
+
+## 辅助 API
+- `api://util/unicode`: 内容转义，POST data 格式 `content=要转换的文本`，响应中 `"转换后": "结果"`
+- `api://util/string/replace`: 字符串替换
+
+## 输出格式
+
+只输出严格 JSON，不要 markdown 包裹，不要解释：
+{
+  "sitename": "站点名称",
   "siteurl": "站点首页 URL",
   "note": "操作说明，10-50 字",
-  "entries": [
-    {
-      "method": "POST",
-      "url": "签到接口完整 URL",
-      "headers": [{"name": "Content-Type", "value": "application/json"}],
-      "body": "可能的请求体",
-      "reason": "为什么判断这是签到请求（5-30 字）"
-    }
-  ],
-  "variables": ["需要用户提供的变量名，如 cookie / token"],
-  "success_keyword": "响应中表示签到成功的关键字（如 已签到 / success）"
+  "har": [完整的 QD 模板数组],
+  "variables": ["需要用户提供的变量名列表"]
 }
 
-判断要点：
-1. 优先选择 POST 且 path 含 sign / check / clock / daily / attend / punch 等关键词的请求
+## 判断要点
+1. 优先选择 POST 且 path 含 sign/check/clock/daily/attend/punch 等关键词的请求
 2. 同一接口出现多次时只保留一次
 3. 不要把登录请求当作签到请求，除非确无单独签到接口
-4. 如果实在找不到签到请求，entries 返回空数组并在 note 中说明
+4. Cookie 通常是最关键的变量
+5. 如果能从响应中提取积分/天数等信息，在最后一步用 `api://util/unicode` 格式化输出到 `__log__`
+6. success_asserts 通常检查状态码 200 和响应中的成功关键字
+7. 如果实在找不到签到请求，har 返回空数组并在 note 中说明
+
+## 完整示例（GLaDOS 签到）
+
+输入 HAR 包含:
+- POST https://glados.rocks/api/user/checkin (签到)
+- GET https://glados.rocks/api/user/points (查积分)
+
+输出:
+{
+  "sitename": "GLaDOS",
+  "siteurl": "https://glados.rocks",
+  "note": "GLaDOS 网络加速签到",
+  "har": [
+    {
+      "request": {
+        "method": "POST",
+        "url": "https://glados.rocks/api/user/checkin",
+        "headers": [
+          {"name": "Content-Type", "value": "application/json"},
+          {"name": "Cookie", "value": "{{cookie}}"}
+        ],
+        "cookies": [],
+        "data": "{}",
+        "mimeType": "application/json"
+      },
+      "rule": {
+        "success_asserts": [{"re": "200", "from": "status"}],
+        "failed_asserts": [{"re": "Checkin Repeats", "from": "content"}],
+        "extract_variables": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "https://glados.rocks/api/user/points",
+        "headers": [{"name": "Cookie", "value": "{{cookie}}"}],
+        "cookies": []
+      },
+      "rule": {
+        "success_asserts": [{"re": "200", "from": "status"}],
+        "failed_asserts": [],
+        "extract_variables": [
+          {"name": "points", "re": "\"points\"\\s*:\\s*\"?(\\d+)", "from": "content"}
+        ]
+      }
+    },
+    {
+      "comment": "格式化输出",
+      "request": {
+        "method": "POST",
+        "url": "api://util/unicode",
+        "headers": [],
+        "cookies": [],
+        "data": "html_unescape=false&content=签到成功！当前积分：{{points}}"
+      },
+      "rule": {
+        "success_asserts": [{"re": "200", "from": "status"}],
+        "failed_asserts": [],
+        "extract_variables": [
+          {"name": "__log__", "re": "\"转换后\": \"(.*)\"", "from": "content"}
+        ]
+      }
+    }
+  ],
+  "variables": ["cookie"]
+}
 """
 
 
@@ -337,7 +460,17 @@ def parse_ai_response(content: str) -> Dict[str, Any]:
 
 
 def ai_result_to_har(result: Dict[str, Any]) -> Dict[str, Any]:
-    """把 AI 输出转成 QD 编辑器可加载的 HAR 结构。"""
+    """把 AI 输出转成 QD 编辑器可加载的 HAR 结构。
+
+    支持两种格式：
+    1. 新格式：AI 直接输出 QD 模板数组在 result["har"] 中
+    2. 旧格式：AI 输出 result["entries"]，需要转换
+    """
+    # 新格式：AI 直接输出 QD 模板
+    if "har" in result and isinstance(result["har"], list):
+        return result["har"]
+
+    # 旧格式兼容：转换 entries 为 QD 模板
     har_entries: List[Dict[str, Any]] = []
     for item in result.get("entries", []) or []:
         method = (item.get("method") or "GET").upper()
@@ -350,57 +483,64 @@ def ai_result_to_har(result: Dict[str, Any]) -> Dict[str, Any]:
                 {"name": str(h.get("name", "")), "value": str(h.get("value", ""))}
             )
         body = item.get("body") or ""
-        post_data = (
-            {
-                "mimeType": next(
-                    (
-                        h["value"]
-                        for h in headers
-                        if h["name"].lower() == "content-type"
-                    ),
-                    "application/x-www-form-urlencoded",
-                ),
-                "text": body,
-            }
-            if body
-            else None
-        )
-        entry: Dict[str, Any] = {
-            "request": {
-                "method": method,
-                "url": url,
-                "headers": headers,
-                "cookies": [],
-                "queryString": [],
-                "httpVersion": "HTTP/1.1",
-                "headersSize": -1,
-                "bodySize": len(body) if body else 0,
-            },
-            "response": {
-                "status": 200,
-                "statusText": "OK",
-                "headers": [],
-                "cookies": [],
-                "content": {"size": 0, "mimeType": "text/plain", "text": ""},
-                "redirectURL": "",
-                "headersSize": -1,
-                "bodySize": -1,
-            },
-            "startedDateTime": "",
-            "time": 0,
-            "cache": {},
-            "timings": {"send": 0, "wait": 0, "receive": 0},
-            "_ai_reason": item.get("reason", ""),
+
+        # 构建 QD 格式的请求
+        request: Dict[str, Any] = {
+            "method": method,
+            "url": url,
+            "headers": headers,
+            "cookies": [],
         }
-        if post_data:
-            entry["request"]["postData"] = post_data
+        if body:
+            request["data"] = body
+            # 从 headers 中获取 Content-Type
+            content_type = next(
+                (h["value"] for h in headers if h["name"].lower() == "content-type"),
+                "application/x-www-form-urlencoded",
+            )
+            request["mimeType"] = content_type
+
+        # 构建规则
+        success_keyword = result.get("success_keyword", "")
+        rule: Dict[str, Any] = {
+            "success_asserts": [{"re": "200", "from": "status"}],
+            "failed_asserts": [],
+            "extract_variables": [],
+        }
+        # 如果有成功关键字，添加到断言
+        if success_keyword:
+            rule["success_asserts"].append(
+                {"re": success_keyword, "from": "content"}
+            )
+
+        entry: Dict[str, Any] = {
+            "request": request,
+            "rule": rule,
+        }
+        # 添加步骤说明
+        if item.get("reason"):
+            entry["comment"] = item["reason"]
+
         har_entries.append(entry)
 
-    return {
-        "log": {
-            "version": "1.2",
-            "creator": {"name": "QD AI", "version": "1.0"},
-            "pages": [],
-            "entries": har_entries,
-        }
-    }
+    # 如果有成功关键字，添加一个日志输出步骤
+    if result.get("success_keyword"):
+        har_entries.append({
+            "comment": "输出签到结果",
+            "request": {
+                "method": "POST",
+                "url": "api://util/unicode",
+                "headers": [],
+                "cookies": [],
+                "data": "html_unescape=false&content=签到成功！",
+            },
+            "rule": {
+                "success_asserts": [{"re": "200", "from": "status"}],
+                "failed_asserts": [],
+                "extract_variables": [
+                    {"name": "__log__", "re": "\"转换后\": \"(.*)\"", "from": "content"}
+                ],
+            },
+        })
+
+    return har_entries

@@ -622,7 +622,7 @@ class HARAIStatus(BaseHandler):
 
 
 class HARAutoCapture(BaseHandler):
-    """通过 Playwright sidecar 自动抓 HAR。
+    """通过内置 Playwright 自动抓 HAR。
 
     请求体:
         {
@@ -633,87 +633,62 @@ class HARAutoCapture(BaseHandler):
             "auto_analyze": true     # 抓到 HAR 后是否自动调用 AI 分析
         }
     响应:
-        sidecar 原始返回 (含 har / candidates / actions),
+        抓包结果 (含 har / candidates / actions),
         若 auto_analyze=true 且抓包成功, 自动衔接 AI 并把结果一并返回。
     """
 
     @tornado.web.authenticated
     async def post(self) -> None:
         self.evil(+1)
-        if not config.playwright_sidecar_url:
+
+        # 检查 Playwright 是否可用
+        from libs import playwright_capture
+
+        if not playwright_capture.is_available():
             self.set_status(503)
             await self.finish(
                 {
                     "ok": False,
-                    "error": "URL 自动抓包未启用, 请管理员设置 PLAYWRIGHT_SIDECAR_URL "
-                    "并部署 services/playwright 容器",
+                    "error": "Playwright 未安装，请运行: pip install playwright && playwright install chromium",
                 }
             )
             return
+
         try:
             payload = json.loads(self.request.body or b"{}")
         except json.JSONDecodeError as e:
             self.set_status(400)
             await self.finish({"ok": False, "error": f"请求体不是合法 JSON: {e}"})
             return
-        if not isinstance(payload.get("url"), str):
+
+        url = payload.get("url")
+        if not isinstance(url, str):
             self.set_status(400)
             await self.finish({"ok": False, "error": "url 字段必填"})
             return
+
+        # 验证 URL
+        try:
+            playwright_capture.validate_url(url)
+        except ValueError as e:
+            self.set_status(400)
+            await self.finish({"ok": False, "error": str(e)})
+            return
+
         auto_analyze = bool(payload.pop("auto_analyze", False))
 
-        sidecar_url = config.playwright_sidecar_url.rstrip("/") + "/capture"
-        # 延迟导入 aiohttp, 与 ai_client 保持一致, 便于离线测试导入
-        import aiohttp
-
-        timeout = aiohttp.ClientTimeout(total=config.playwright_capture_timeout)
-        max_bytes = config.playwright_max_har_bytes
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(sidecar_url, json=payload) as resp:
-                    # 流式读取并强制大小上限, 避免恶意/异常大 HAR 撑爆 QD 内存
-                    try:
-                        body = await ai_client.read_capped(
-                            resp.content.iter_chunked(64 * 1024), max_bytes
-                        )
-                    except ai_client.HARSizeLimitExceeded as e:
-                        self.set_status(413)
-                        await self.finish({"ok": False, "error": str(e)})
-                        return
-                    if resp.status >= 500:
-                        logger_web_handler.warning(
-                            "Playwright sidecar 5xx %s: %s",
-                            resp.status,
-                            body[:300].decode("utf-8", "replace"),
-                        )
-                        self.set_status(502)
-                        await self.finish(
-                            {
-                                "ok": False,
-                                "error": (
-                                    f"sidecar 内部错误 {resp.status}: "
-                                    + body[:300].decode("utf-8", "replace")
-                                ),
-                            }
-                        )
-                        return
-                    try:
-                        result = json.loads(body)
-                    except json.JSONDecodeError as e:
-                        self.set_status(502)
-                        await self.finish(
-                            {
-                                "ok": False,
-                                "error": f"sidecar 响应非合法 JSON: {e}",
-                            }
-                        )
-                        return
-        except aiohttp.ClientError as e:
-            self.set_status(502)
-            await self.finish(
-                {"ok": False, "error": f"连接 sidecar 失败: {e}"}
+            result = await playwright_capture.capture_har(
+                url=url,
+                cookies=payload.get("cookies"),
+                storage_state=payload.get("storage_state"),
+                hint=payload.get("hint", ""),
+                selector=payload.get("selector"),
+                user_agent=payload.get("user_agent"),
+                viewport=payload.get("viewport"),
+                timeout_ms=payload.get("timeout_ms", 60000),
+                wait_after_click_ms=payload.get("wait_after_click_ms", 3000),
             )
-            return
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger_web_handler.error(
                 "auto_capture 异常: %s", e, exc_info=config.traceback_print
@@ -748,12 +723,89 @@ class HARAutoCaptureStatus(BaseHandler):
     """前端查询自动抓包功能是否可用。"""
 
     async def get(self) -> None:
+        from libs import playwright_capture
+
         await self.finish(
             {
-                "enabled": bool(config.playwright_sidecar_url),
-                "sidecar_url": config.playwright_sidecar_url or "",
+                "enabled": playwright_capture.is_available(),
+                "sidecar_url": "",  # 不再需要 sidecar
+                "builtin": True,
             }
         )
+
+
+class GetCookiesPage(BaseHandler):
+    """Cookie 抓取页面。"""
+
+    async def get(self) -> None:
+        await self.render("get_cookies.html")
+
+
+class GetCookiesAPI(BaseHandler):
+    """Cookie 抓取 API。
+
+    请求体:
+        {
+            "url": "https://...",
+            "user_agent": "..."  // 可选
+        }
+    响应:
+        {"ok": true, "cookies": "k1=v1; k2=v2", "storage_state": {...}, ...}
+    """
+
+    @tornado.web.authenticated
+    async def post(self) -> None:
+        self.evil(+1)
+
+        from libs import playwright_capture
+
+        if not playwright_capture.is_available():
+            self.set_status(503)
+            await self.finish(
+                {
+                    "ok": False,
+                    "error": "Playwright 未安装，请运行: pip install playwright && playwright install chromium",
+                }
+            )
+            return
+
+        try:
+            payload = json.loads(self.request.body or b"{}")
+        except json.JSONDecodeError as e:
+            self.set_status(400)
+            await self.finish({"ok": False, "error": f"请求体不是合法 JSON: {e}"})
+            return
+
+        url = payload.get("url")
+        if not isinstance(url, str):
+            self.set_status(400)
+            await self.finish({"ok": False, "error": "url 字段必填"})
+            return
+
+        # 验证 URL
+        try:
+            playwright_capture.validate_url(url)
+        except ValueError as e:
+            self.set_status(400)
+            await self.finish({"ok": False, "error": str(e)})
+            return
+
+        user_agent = payload.get("user_agent")
+
+        try:
+            result = await playwright_capture.capture_cookies(
+                url=url,
+                user_agent=user_agent,
+            )
+        except Exception as e:
+            logger_web_handler.error(
+                "get_cookies 异常: %s", e, exc_info=config.traceback_print
+            )
+            self.set_status(500)
+            await self.finish({"ok": False, "error": f"内部错误: {e}"})
+            return
+
+        await self.finish(result)
 
 
 handlers = [
@@ -766,4 +818,6 @@ handlers = [
     (r"/har/ai_status", HARAIStatus),
     (r"/har/auto_capture", HARAutoCapture),
     (r"/har/auto_capture_status", HARAutoCaptureStatus),
+    (r"/get_cookies", GetCookiesAPI),
+    (r"/get_cookies/page", GetCookiesPage),
 ]
