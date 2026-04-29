@@ -42,16 +42,12 @@
     $(document).on('click', "[data-toggle=get-cookie]", function(ev) {
       var $this;
       $this = $(this);
-      // if $this.attr('disabled')
-      //   return
       cookie_input = angular.element($this.parent().find('input'));
       if ($('body').attr('get-cookie') !== 'true') {
-        // $this.html('没有插件，详情F12')
-        // console.log('如需要插件请访问 https://github.com/qd-today/get-cookies/ 下载并手动安装插件')
         if ($this.attr('getmod') === 1) {
-          $this.attr('href', 'https://github.com/qd-today/get-cookies/').attr('target', '_blank').html('安装插件后请刷新');
+          $this.attr('href', '/get-cookies/').attr('target', '_blank').html('打开安装指引');
         } else {
-          $this.attr('getmod', 1).html('再次点击前往安装 Get-Cookies 插件');
+          $this.attr('getmod', 1).html('未检测到扩展，再次点击查看安装指引');
         }
       }
     });

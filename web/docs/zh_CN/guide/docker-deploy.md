@@ -100,7 +100,7 @@ docker compose -f docker-compose.local.yml logs -f qd
 成功启动会看到（FastAPI 模式，默认）：
 
 ```
-[I QD.FastAPI fastapi_app:215] FastAPI: registered 18 router(s)
+[I QD.FastAPI fastapi_app:215] FastAPI: registered 19 router(s)
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:80
 ```

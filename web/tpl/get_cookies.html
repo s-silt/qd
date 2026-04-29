@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}QD Cookies 获取助手 - 安装指引{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+.gc-card { padding: 16px; margin-bottom: 16px; border: 1px solid #e6e6e6; border-radius: 6px; background: #fafafa; }
+.gc-card h3 { margin-top: 0; }
+.gc-bookmark-btn {
+  display: inline-block; padding: 8px 16px; background: #2c3e50; color: #fff !important;
+  border-radius: 4px; text-decoration: none; font-weight: 600; cursor: grab;
+}
+.gc-bookmark-btn:hover { background: #34495e; }
+.gc-status { font-weight: 600; }
+.gc-status.ok { color: #2a8a3e; }
+.gc-status.no { color: #c0392b; }
+pre { padding: 10px; background: #f4f4f4; border-radius: 4px; overflow-x: auto; }
+ol li { margin-bottom: 6px; line-height: 1.7; }
+table.gc-compat { width: 100%; border-collapse: collapse; margin-top: 8px; }
+table.gc-compat th, table.gc-compat td { padding: 6px 10px; border: 1px solid #ddd; text-align: left; }
+table.gc-compat th { background: #f0f0f0; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="container">
+  <h2 style="margin-top: 24px;">QD Cookies 获取助手</h2>
+  <p>
+    在已登录的目标站点页面上一键导出 cookie 并发送给 QD，省去手动复制粘贴。
+    本仓库提供两条路线，选其一即可。
+  </p>
+
+  <div class="gc-card">
+    <h3>当前页面状态</h3>
+    <p>扩展已安装并就绪：<span id="gc-detect" class="gc-status no">未检测到</span></p>
+    <p style="font-size: 13px; color: #666;">如果你刚装好扩展并刷新过本页面，状态应显示「已就绪」。</p>
+  </div>
+
+  <div class="gc-card">
+    <h3>方式 A：浏览器扩展（推荐，可拿 HttpOnly cookie）</h3>
+    <ol>
+      <li>下载扩展源码：
+        <a class="btn btn-primary btn-sm" href="/get-cookies/download" download="qd-get-cookies.zip">下载 qd-get-cookies.zip</a>
+        <span style="font-size: 13px; color: #666;">（直接打包自仓库的 <code>web/extension/get-cookies/</code>）</span>
+      </li>
+      <li>解压后，打开 Chromium 系浏览器的扩展页（Chrome：<code>chrome://extensions/</code>，Edge：<code>edge://extensions/</code>），开启 <strong>开发者模式</strong>。</li>
+      <li>点 <strong>加载已解压的扩展程序</strong>，选择刚解压的目录。</li>
+      <li>装好后点扩展图标 → <strong>选项</strong>，在白名单里加入当前 QD 站点（示例已自动填入）：
+        <pre id="gc-self-origin">{{ '' }}</pre>
+      </li>
+      <li>登录目标签到站点（不是 QD 站点）后，回到 QD 任务/HAR 编辑器点 <strong>获取</strong> 即可。</li>
+    </ol>
+  </div>
+
+  <div class="gc-card">
+    <h3>方式 B：Bookmarklet（零安装，仅可见 cookie）</h3>
+    <p>
+      把下面这个按钮 <strong>拖到浏览器书签栏</strong>，登录目标站点后点击它，
+      cookie 会被复制到剪贴板，你再回 QD 粘贴即可。
+    </p>
+    <p>
+      <a id="gc-bookmark" class="gc-bookmark-btn"
+         title="拖动这个按钮到书签栏即可"
+         href="javascript:(()=>{const c=document.cookie;if(!c){alert('未获取到 cookie，请确认你已登录');return;}navigator.clipboard.writeText(c).then(()=>alert('已复制 '+c.split(';').length+' 项 cookie 到剪贴板'),e=>alert('复制失败：'+e));})();">
+         📋 QD 复制 Cookie
+      </a>
+    </p>
+    <p style="font-size: 13px; color: #c0392b;">
+      ⚠️ Bookmarklet 受 <code>document.cookie</code> 限制，<strong>拿不到 HttpOnly cookie</strong>
+      （很多签到站的 session cookie 都是 HttpOnly，此时只能用方式 A）。
+    </p>
+  </div>
+
+  <div class="gc-card">
+    <h3>两种方式对比</h3>
+    <table class="gc-compat">
+      <thead><tr><th></th><th>扩展（方式 A）</th><th>Bookmarklet（方式 B）</th></tr></thead>
+      <tbody>
+        <tr><td>安装成本</td><td>需开发者模式加载</td><td>拖入书签栏即可</td></tr>
+        <tr><td>可拿 HttpOnly cookie</td><td>✅ 是</td><td>❌ 否</td></tr>
+        <tr><td>跨浏览器兼容</td><td>仅 Chromium 系</td><td>所有现代浏览器</td></tr>
+        <tr><td>与 QD 自动联动</td><td>点 QD 内「获取」按钮</td><td>需手动到 QD 粘贴</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function() {
+  // surface the current origin for the user to copy into the extension's allowlist
+  var pre = document.getElementById('gc-self-origin');
+  if (pre) pre.textContent = window.location.origin;
+
+  // detect whether the extension content script has marked the body
+  function refreshDetect() {
+    var el = document.getElementById('gc-detect');
+    if (!el) return;
+    if (document.body.getAttribute('get-cookie') === 'true') {
+      el.textContent = '已就绪';
+      el.classList.remove('no');
+      el.classList.add('ok');
+    }
+  }
+  refreshDetect();
+  window.addEventListener('message', function(ev) {
+    if (ev.origin !== window.location.origin) return;
+    if (ev.data && ev.data.info === 'get-cookieModReady') refreshDetect();
+  }, false);
+})();
+</script>
+{% endblock %}
