@@ -66,7 +66,7 @@ if hasattr(engine.sync_engine.pool, 'logger'):
                              channel_level=config.sqlalchemy.pool_logging_level).getlogger()
 async_session = async_scoped_session(sessionmaker(engine, class_=AsyncSession, expire_on_commit=False),
                                      scopefunc=current_task)
-BaseDB = declarative_base(bind=engine, name="BaseDB")
+BaseDB = declarative_base(name="BaseDB")
 
 
 class AlchemyMixin:
