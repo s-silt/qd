@@ -60,6 +60,11 @@ ALLOW_HOSTS = [h.strip() for h in os.getenv("ALLOW_HOSTS", "").split(",") if h.s
 # 默认拒绝私有/环回/链路本地地址（SSRF 防护）。设 BLOCK_PRIVATE_IPS=false 可关闭。
 BLOCK_PRIVATE_IPS = os.getenv("BLOCK_PRIVATE_IPS", "true").lower() not in ("0", "false", "no")
 
+# 内部超时常量（毫秒）：不暴露为环境变量，但集中定义便于调整
+CLICK_TIMEOUT_MS: int = 10_000          # 单次 click() / get_by_text().click() 超时
+POST_CLICK_IDLE_TIMEOUT_MS: int = 5_000  # 点击后等待 networkidle 超时
+NETWORK_IDLE_TIMEOUT_MS: int = 10_000   # 页面加载后等待 networkidle 超时
+
 
 def _normalize_ipv4(hostname: str) -> "ipaddress.IPv4Address | None":
     """尝试将 decimal/hex/octal 形式的 IPv4 字符串规范化为 IPv4Address。
@@ -257,12 +262,12 @@ async def _find_and_click(page, hint: str, actions: List[Dict[str, Any]]):
     await asyncio.sleep(0.1 + random.random() * 0.3)
     selector = chosen["selector"]
     try:
-        await page.click(selector, timeout=10000)
+        await page.click(selector, timeout=CLICK_TIMEOUT_MS)
     except PlaywrightError:
         # selector 失效, 退化到按文本点击
         text = chosen["text"]
         try:
-            await page.get_by_text(text, exact=False).first.click(timeout=10000)
+            await page.get_by_text(text, exact=False).first.click(timeout=CLICK_TIMEOUT_MS)
         except PlaywrightError as e:
             actions.append({"type": "click_failed", "selector": selector, "error": str(e)})
             return False, chosen, top
@@ -315,7 +320,7 @@ async def perform_capture(
             except PlaywrightTimeout:
                 actions.append({"type": "navigate_timeout"})
             try:
-                await page.wait_for_load_state("networkidle", timeout=10000)
+                await page.wait_for_load_state("networkidle", timeout=NETWORK_IDLE_TIMEOUT_MS)
             except PlaywrightTimeout:
                 pass
 
@@ -333,7 +338,7 @@ async def perform_capture(
 
             if req.selector:
                 try:
-                    await page.click(req.selector, timeout=10000)
+                    await page.click(req.selector, timeout=CLICK_TIMEOUT_MS)
                     actions.append({"type": "click", "selector": req.selector, "manual": True})
                     chosen = {"selector": req.selector, "text": "(用户指定)"}
                     candidates: List[Dict[str, Any]] = []
@@ -361,7 +366,7 @@ async def perform_capture(
 
             await asyncio.sleep(req.wait_after_click_ms / 1000)
             try:
-                await page.wait_for_load_state("networkidle", timeout=5000)
+                await page.wait_for_load_state("networkidle", timeout=POST_CLICK_IDLE_TIMEOUT_MS)
             except PlaywrightTimeout:
                 pass
 
