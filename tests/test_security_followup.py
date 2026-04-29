@@ -40,14 +40,40 @@ _APP_PY = os.path.join(_REPO_ROOT, "services", "playwright", "app.py")
 # ---------------------------------------------------------------------------
 
 def _inject_stubs() -> None:
-    """Inject minimal stubs for fastapi / playwright / button_finder."""
+    """Inject minimal stubs for fastapi / playwright / button_finder / pydantic."""
 
     # ---- fastapi stub ----
+    # Must provide FastAPI with .get() / .post() route decorators so that
+    # @app.get(...) module-level code in app.py doesn't crash on import.
     if "fastapi" not in sys.modules:
+        def _noop_deco(*a, **kw):
+            return lambda f: f
+
+        _FastAPI = type("FastAPI", (), {
+            "__init__": lambda self, **kw: None,
+            "get": _noop_deco,
+            "post": _noop_deco,
+        })
         fastapi_mod = types.ModuleType("fastapi")
-        fastapi_mod.FastAPI = type("FastAPI", (), {"__init__": lambda self, **kw: None})
+        fastapi_mod.FastAPI = _FastAPI
         fastapi_mod.HTTPException = Exception
         sys.modules["fastapi"] = fastapi_mod
+
+    # ---- pydantic stub (BaseModel / Field / field_validator) ----
+    if "pydantic" not in sys.modules:
+        class _BaseModel:
+            def __init__(self, **kw):
+                for k, v in kw.items():
+                    setattr(self, k, v)
+            @classmethod
+            def validate_url(cls, v):
+                return v
+
+        pyd = types.ModuleType("pydantic")
+        pyd.BaseModel = _BaseModel
+        pyd.Field = lambda *a, **kw: None
+        pyd.field_validator = lambda *a, **kw: (lambda f: f)
+        sys.modules["pydantic"] = pyd
 
     # ---- playwright stubs ----
     for name in ("playwright", "playwright.async_api"):
@@ -389,6 +415,100 @@ class TestPlaywrightAppSourceLevel(unittest.TestCase):
         """_is_blocked_host must check ip.is_link_local."""
         src = self._read_app_source()
         self.assertIn("is_link_local", src)
+
+
+# ---------------------------------------------------------------------------
+# F. _is_blocked_host: decimal/hex/octal IP bypass (Round-2 additions)
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(_APP_AVAILABLE, "playwright app import failed")
+class TestIsBlockedHostAltFormats(unittest.TestCase):
+    """Verify that _is_blocked_host blocks non-standard IP representations.
+
+    Browsers (including Chromium) accept decimal-integer, hex, and octal
+    IPv4 addresses; Python's ipaddress module does not.  Round-2 fix adds a
+    socket.inet_aton normalisation pass to catch these forms.
+    """
+
+    def _b(self, h: str) -> bool:
+        return _APP._is_blocked_host(h)
+
+    # Decimal integer form (2130706433 == 127.0.0.1)
+    def test_decimal_loopback(self):
+        self.assertTrue(self._b("2130706433"))
+
+    # Hexadecimal form
+    def test_hex_loopback(self):
+        self.assertTrue(self._b("0x7f000001"))
+
+    # Octal-dotted form
+    def test_octal_loopback(self):
+        self.assertTrue(self._b("0177.0.0.1"))
+
+    # Mixed-case "LOCALHOST" – must be blocked
+    def test_uppercase_localhost(self):
+        self.assertTrue(self._b("LOCALHOST"))
+
+    def test_mixed_case_localhost(self):
+        self.assertTrue(self._b("LocalHost"))
+
+    # Documentation prefix 2001:db8::/32 is reserved
+    def test_documentation_ipv6(self):
+        self.assertTrue(self._b("2001:db8::1"))
+
+    # ULA fc00::/7 is private
+    def test_ula_ipv6(self):
+        self.assertTrue(self._b("fc00::1"))
+
+    def test_ula_ipv6_fd(self):
+        self.assertTrue(self._b("fd00::1"))
+
+    # Decimal form of cloud metadata IP
+    def test_decimal_metadata(self):
+        # 169.254.169.254 as decimal = 0xA9FEA9FE = 2852039166
+        import struct, socket
+        packed = socket.inet_aton("169.254.169.254")
+        decimal_val = str(struct.unpack("!I", packed)[0])
+        self.assertTrue(self._b(decimal_val))
+
+    # Public IPs must NOT be blocked (regression)
+    def test_public_8_8_8_8_still_allowed(self):
+        self.assertFalse(self._b("8.8.8.8"))
+
+    def test_public_domain_still_allowed(self):
+        self.assertFalse(self._b("example.com"))
+
+
+# ---------------------------------------------------------------------------
+# G. validate_url: decimal/hex bypass regression (Round-2)
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(_APP_AVAILABLE, "playwright app import failed")
+class TestValidateUrlAltFormats(unittest.TestCase):
+    """validate_url must reject decimal/hex/octal IP forms."""
+
+    def _validate(self, url: str) -> str:
+        orig_allow = _APP.ALLOW_HOSTS
+        orig_block = _APP.BLOCK_PRIVATE_IPS
+        try:
+            _APP.ALLOW_HOSTS = []
+            _APP.BLOCK_PRIVATE_IPS = True
+            return _APP.CaptureRequest.validate_url(url)
+        finally:
+            _APP.ALLOW_HOSTS = orig_allow
+            _APP.BLOCK_PRIVATE_IPS = orig_block
+
+    def test_blocks_decimal_loopback(self):
+        with self.assertRaises(ValueError):
+            self._validate("http://2130706433/admin")
+
+    def test_blocks_hex_loopback(self):
+        with self.assertRaises(ValueError):
+            self._validate("http://0x7f000001/admin")
+
+    def test_blocks_octal_loopback(self):
+        with self.assertRaises(ValueError):
+            self._validate("http://0177.0.0.1/admin")
 
 
 if __name__ == "__main__":
