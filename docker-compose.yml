@@ -11,6 +11,11 @@ services:
     volumes:
       - "./config:/usr/src/app/config"
     environment:
+      # === Web framework selector ===
+      # Default is FastAPI (uvicorn). Set to 'tornado' to use the legacy server.
+      # - WEB_FRAMEWORK=fastapi
+      # - WEB_FRAMEWORK=tornado
+
       # - QD_DEBUG=False
       # - BIND=0.0.0.0
       # - PORT=80

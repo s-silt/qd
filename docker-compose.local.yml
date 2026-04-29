@@ -16,6 +16,11 @@ services:
     volumes:
       - "./config:/usr/src/app/config"
     environment:
+      # === Web 框架选择 ===
+      # 默认启动 FastAPI (uvicorn)。切换为 Tornado 旧版服务：
+      # - WEB_FRAMEWORK=fastapi   # 默认，无需显式设置
+      # - WEB_FRAMEWORK=tornado   # 切换为 Tornado
+
       # === 基础设置（生产环境务必修改下面三项）===
       - DOMAIN=
       - COOKIE_SECRET=please-change-to-a-long-random-string
