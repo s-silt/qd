@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QD 框架 — 登录（扁平化 POC）</title>
+  <link rel="stylesheet" href="theme-flat.css">
+  <link rel="stylesheet" href="theme-flat-dark.css">
+  <style>
+    /* Demo notice */
+    .demo-notice {
+      position: fixed;
+      top: var(--space-4);
+      right: var(--space-4);
+      background: #fffbe6;
+      border: 1px solid #ffe58f;
+      border-radius: var(--border-radius);
+      padding: var(--space-2) var(--space-4);
+      font-size: var(--font-size-xs);
+      color: #7d5a00;
+      z-index: 999;
+      box-shadow: var(--shadow-md);
+    }
+
+    /* Error text */
+    .qd-field-error {
+      margin-top: var(--space-1);
+      font-size: var(--font-size-xs);
+      color: var(--color-danger);
+    }
+
+    /* Password toggle button inside input */
+    .qd-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .qd-input-wrap .qd-input {
+      padding-right: 40px;
+    }
+    .qd-pw-toggle {
+      position: absolute;
+      right: 10px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      padding: 0;
+      font-size: 15px;
+      line-height: 1;
+      transition: color var(--transition-fast);
+    }
+    .qd-pw-toggle:hover { color: var(--text-secondary); }
+
+    /* Tab switcher: login | register */
+    .qd-auth-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--border-color);
+      margin-bottom: var(--space-6);
+    }
+    .qd-auth-tab {
+      flex: 1;
+      padding: var(--space-3) 0;
+      text-align: center;
+      font-size: var(--font-size-sm);
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      border: none;
+      background: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: color var(--transition-fast), border-color var(--transition-fast);
+    }
+    .qd-auth-tab--active {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+    }
+    .qd-auth-tab:hover:not(.qd-auth-tab--active) {
+      color: var(--text-secondary);
+    }
+
+    /* Divider with text */
+    .qd-divider-or {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      margin: var(--space-5) 0;
+      color: var(--text-muted);
+      font-size: var(--font-size-xs);
+    }
+    .qd-divider-or::before,
+    .qd-divider-or::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border-color);
+    }
+
+    /* Decorative background blobs (CSS only, no images) */
+    .qd-auth__blob {
+      position: fixed;
+      border-radius: 50%;
+      opacity: 0.08;
+      pointer-events: none;
+    }
+    .qd-auth__blob--1 {
+      width: 400px;
+      height: 400px;
+      background: var(--color-primary);
+      top: -100px;
+      left: -80px;
+    }
+    .qd-auth__blob--2 {
+      width: 300px;
+      height: 300px;
+      background: var(--color-info);
+      bottom: -60px;
+      right: -60px;
+    }
+
+    /* Feature bullets shown beside the form on large screens */
+    .qd-auth__side {
+      display: none;
+    }
+    @media (min-width: 900px) {
+      .qd-auth {
+        gap: var(--space-10);
+      }
+      .qd-auth__side {
+        display: block;
+        max-width: 340px;
+        color: var(--text-secondary);
+      }
+    }
+
+    .qd-feature-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-5);
+    }
+    .qd-feature-list li {
+      display: flex;
+      gap: var(--space-4);
+      align-items: flex-start;
+    }
+    .qd-feature-icon {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+      border-radius: var(--border-radius);
+      background: var(--color-primary-subtle);
+      color: var(--color-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+    .qd-feature-text strong {
+      display: block;
+      font-size: var(--font-size-base);
+      color: var(--text-primary);
+      margin-bottom: var(--space-1);
+    }
+    .qd-feature-text span {
+      font-size: var(--font-size-xs);
+    }
+
+    /* Dark-mode toggle fixed button */
+    .qd-theme-toggle-fixed {
+      position: fixed;
+      top: var(--space-4);
+      left: var(--space-4);
+      z-index: 999;
+    }
+  </style>
+</head>
+
+<body>
+
+<!-- Decorative background blobs -->
+<div class="qd-auth__blob qd-auth__blob--1" aria-hidden="true"></div>
+<div class="qd-auth__blob qd-auth__blob--2" aria-hidden="true"></div>
+
+<!-- Demo notice -->
+<div class="demo-notice">📐 扁平化 POC — demo-login.html（静态演示）</div>
+
+<!-- Dark mode toggle -->
+<div class="qd-theme-toggle-fixed">
+  <button class="qd-theme-toggle" id="themeToggle" title="切换暗色模式" aria-label="切换暗色模式">
+    <span id="themeIcon">🌙</span>
+  </button>
+</div>
+
+<!-- =========================================================
+     AUTH WRAPPER
+     ========================================================= -->
+<div class="qd-auth">
+
+  <!-- Side panel (visible on ≥900px) -->
+  <aside class="qd-auth__side">
+    <div style="margin-bottom:var(--space-8);">
+      <div style="font-size:var(--font-size-2xl);font-weight:800;color:var(--color-primary);letter-spacing:-0.02em;margin-bottom:var(--space-2);">QD 框架</div>
+      <p style="font-size:var(--font-size-sm);line-height:1.7;">
+        基于 HAR 编辑器与 Tornado Server 的 HTTP 请求定时任务自动执行框架。
+        让繁琐的每日签到变得全自动。
+      </p>
+    </div>
+
+    <ul class="qd-feature-list">
+      <li>
+        <div class="qd-feature-icon">⏱</div>
+        <div class="qd-feature-text">
+          <strong>定时自动执行</strong>
+          <span>精确到分钟级的 cron 调度，无需手动操作</span>
+        </div>
+      </li>
+      <li>
+        <div class="qd-feature-icon">🔄</div>
+        <div class="qd-feature-text">
+          <strong>HAR 录制重放</strong>
+          <span>录制浏览器请求，一键转换为可重复执行的任务模板</span>
+        </div>
+      </li>
+      <li>
+        <div class="qd-feature-icon">📊</div>
+        <div class="qd-feature-text">
+          <strong>执行日志追踪</strong>
+          <span>完整的成功 / 失败记录，随时查看历史执行详情</span>
+        </div>
+      </li>
+      <li>
+        <div class="qd-feature-icon">🔔</div>
+        <div class="qd-feature-text">
+          <strong>多渠道推送通知</strong>
+          <span>任务失败时通过 Telegram、微信等即时通知</span>
+        </div>
+      </li>
+    </ul>
+  </aside>
+
+  <!-- Auth card -->
+  <div class="qd-auth__card">
+
+    <!-- Logo -->
+    <div class="qd-auth__logo">
+      <!-- Inline SVG logo — no external image dependency -->
+      <svg width="56" height="56" viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg" aria-label="QD 图标">
+        <rect width="56" height="56" rx="12" fill="var(--color-primary)"/>
+        <text x="28" y="38" text-anchor="middle" font-family="-apple-system,sans-serif" font-weight="800" font-size="26" fill="#ffffff">QD</text>
+      </svg>
+      <div class="qd-auth__logo-name">QD 框架</div>
+      <div class="qd-auth__logo-tagline">HTTP 请求定时任务自动执行框架</div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="qd-auth-tabs" role="tablist">
+      <button class="qd-auth-tab qd-auth-tab--active" role="tab" aria-selected="true" id="tab-login" onclick="switchTab('login')">登录</button>
+      <button class="qd-auth-tab" role="tab" aria-selected="false" id="tab-register" onclick="switchTab('register')">注册</button>
+    </div>
+
+    <!-- ---- LOGIN PANEL ---- -->
+    <div id="panel-login">
+
+      <!-- Inline alert (shown on error) — hidden by default in this demo -->
+      <div class="qd-alert qd-alert--danger" id="loginError" style="display:none;margin-bottom:var(--space-5);">
+        <span>邮箱或密码不正确，请重试。</span>
+      </div>
+
+      <form id="loginForm" novalidate>
+
+        <div class="qd-form-group">
+          <label class="qd-label" for="login-email">
+            Email 地址
+            <span style="color:var(--color-danger)">*</span>
+          </label>
+          <input
+            type="email"
+            class="qd-input"
+            id="login-email"
+            name="email"
+            placeholder="you@example.com"
+            autocomplete="email"
+            spellcheck="false"
+            required
+          >
+          <p class="qd-field-error" id="login-email-err" style="display:none;">请输入有效的邮箱地址</p>
+        </div>
+
+        <div class="qd-form-group">
+          <label class="qd-label" for="login-password">
+            密码
+            <span style="color:var(--color-danger)">*</span>
+            <a href="#" style="float:right;font-size:var(--font-size-xs);font-weight:400;" onclick="showForgot(event)">忘记密码？</a>
+          </label>
+          <div class="qd-input-wrap">
+            <input
+              type="password"
+              class="qd-input"
+              id="login-password"
+              name="password"
+              placeholder="输入密码"
+              autocomplete="current-password"
+              required
+            >
+            <button type="button" class="qd-pw-toggle" aria-label="显示/隐藏密码" onclick="togglePw('login-password', this)">👁</button>
+          </div>
+          <p class="qd-field-error" id="login-pw-err" style="display:none;">密码不能为空</p>
+        </div>
+
+        <div class="qd-auth__actions">
+          <button type="submit" class="qd-btn qd-btn--primary" id="loginBtn">
+            登录
+          </button>
+        </div>
+
+      </form>
+
+    </div><!-- /panel-login -->
+
+
+    <!-- ---- REGISTER PANEL ---- -->
+    <div id="panel-register" style="display:none;">
+
+      <div class="qd-alert qd-alert--info" style="margin-bottom:var(--space-5);">
+        <span>欢迎注册私有 QD 平台</span>
+      </div>
+
+      <form id="registerForm" novalidate>
+
+        <div class="qd-form-group">
+          <label class="qd-label" for="reg-email">
+            Email 地址
+            <span style="color:var(--color-danger)">*</span>
+          </label>
+          <input
+            type="email"
+            class="qd-input"
+            id="reg-email"
+            name="email"
+            placeholder="you@example.com"
+            autocomplete="email"
+            required
+          >
+        </div>
+
+        <div class="qd-form-group">
+          <label class="qd-label" for="reg-password">
+            密码
+            <span style="color:var(--color-danger)">*</span>
+          </label>
+          <div class="qd-input-wrap">
+            <input
+              type="password"
+              class="qd-input"
+              id="reg-password"
+              name="password"
+              placeholder="至少 8 位"
+              autocomplete="new-password"
+              required
+            >
+            <button type="button" class="qd-pw-toggle" aria-label="显示/隐藏密码" onclick="togglePw('reg-password', this)">👁</button>
+          </div>
+          <!-- Password strength indicator -->
+          <div id="pwStrengthBar" style="margin-top:var(--space-2);display:none;">
+            <div style="height:4px;border-radius:2px;background:var(--border-color);overflow:hidden;">
+              <div id="pwStrengthFill" style="height:100%;border-radius:2px;transition:width 0.3s,background 0.3s;width:0%;background:var(--color-danger);"></div>
+            </div>
+            <p class="qd-help-text" id="pwStrengthLabel"></p>
+          </div>
+        </div>
+
+        <div class="qd-form-group">
+          <label class="qd-label" for="reg-password2">
+            确认密码
+            <span style="color:var(--color-danger)">*</span>
+          </label>
+          <input
+            type="password"
+            class="qd-input"
+            id="reg-password2"
+            name="password2"
+            placeholder="再次输入密码"
+            autocomplete="new-password"
+            required
+          >
+          <p class="qd-field-error" id="reg-pw-match-err" style="display:none;">两次密码不一致</p>
+        </div>
+
+        <div class="qd-auth__actions">
+          <button type="submit" class="qd-btn qd-btn--primary">注册</button>
+        </div>
+
+      </form>
+
+    </div><!-- /panel-register -->
+
+
+    <!-- ---- FORGOT PASSWORD (inline state) ---- -->
+    <div id="panel-forgot" style="display:none;">
+      <button onclick="switchTab('login')" class="qd-btn qd-btn--ghost qd-btn--sm" style="margin-bottom:var(--space-4);">← 返回登录</button>
+
+      <div class="qd-alert qd-alert--info" style="margin-bottom:var(--space-5);">
+        <span>输入注册时使用的邮箱，我们将发送重置链接。</span>
+      </div>
+
+      <form id="forgotForm" novalidate>
+        <div class="qd-form-group">
+          <label class="qd-label" for="forgot-email">Email 地址</label>
+          <input type="email" class="qd-input" id="forgot-email" name="email" placeholder="you@example.com" autocomplete="email">
+        </div>
+        <div class="qd-auth__actions">
+          <button type="submit" class="qd-btn qd-btn--primary">发送重置邮件</button>
+        </div>
+      </form>
+    </div><!-- /panel-forgot -->
+
+
+    <!-- Footer -->
+    <div class="qd-auth__footer">
+      <a href="https://github.com/qd-today/qd/" target="_blank">GitHub</a> ·
+      <a href="#">开源协议</a> ·
+      © 2026 QD-Today
+    </div>
+
+  </div><!-- /.qd-auth__card -->
+
+</div><!-- /.qd-auth -->
+
+
+<script>
+  // ---- Tab switch ----
+  function switchTab(tab) {
+    var tabs   = ['login', 'register'];
+    var forgot = document.getElementById('panel-forgot');
+    forgot.style.display = 'none';
+
+    tabs.forEach(function(t) {
+      var btn   = document.getElementById('tab-' + t);
+      var panel = document.getElementById('panel-' + t);
+      var active = (t === tab);
+      btn.classList.toggle('qd-auth-tab--active', active);
+      btn.setAttribute('aria-selected', active);
+      panel.style.display = active ? '' : 'none';
+    });
+
+    // Show tabs row again if hidden
+    document.querySelector('.qd-auth-tabs').style.display = '';
+  }
+
+  // ---- Forgot password ----
+  function showForgot(e) {
+    e.preventDefault();
+    ['login','register'].forEach(function(t) {
+      document.getElementById('panel-' + t).style.display = 'none';
+    });
+    document.getElementById('panel-forgot').style.display = '';
+    document.querySelector('.qd-auth-tabs').style.display = 'none';
+  }
+
+  // ---- Password visibility toggle ----
+  function togglePw(inputId, btn) {
+    var inp = document.getElementById(inputId);
+    if (inp.type === 'password') {
+      inp.type = 'text';
+      btn.textContent = '🙈';
+    } else {
+      inp.type = 'password';
+      btn.textContent = '👁';
+    }
+  }
+
+  // ---- Password strength ----
+  var regPw = document.getElementById('reg-password');
+  if (regPw) {
+    regPw.addEventListener('input', function() {
+      var val = this.value;
+      var bar = document.getElementById('pwStrengthBar');
+      var fill = document.getElementById('pwStrengthFill');
+      var label = document.getElementById('pwStrengthLabel');
+      if (!val) { bar.style.display = 'none'; return; }
+      bar.style.display = '';
+      var score = 0;
+      if (val.length >= 8)  score++;
+      if (/[A-Z]/.test(val)) score++;
+      if (/[0-9]/.test(val)) score++;
+      if (/[^A-Za-z0-9]/.test(val)) score++;
+      var widths  = ['20%','40%','65%','100%'];
+      var colours = ['var(--color-danger)','var(--color-warning)','var(--color-info)','var(--color-success)'];
+      var labels  = ['弱', '一般', '较强', '强'];
+      var idx     = Math.max(0, score - 1);
+      fill.style.width      = widths[idx];
+      fill.style.background = colours[idx];
+      label.textContent     = '密码强度：' + labels[idx];
+    });
+  }
+
+  // ---- Login form: demo validation ----
+  document.getElementById('loginForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var emailEl = document.getElementById('login-email');
+    var pwEl    = document.getElementById('login-password');
+    var emailErr = document.getElementById('login-email-err');
+    var pwErr   = document.getElementById('login-pw-err');
+    var alertEl = document.getElementById('loginError');
+    var ok = true;
+
+    emailErr.style.display = 'none';
+    pwErr.style.display    = 'none';
+    alertEl.style.display  = 'none';
+    emailEl.classList.remove('is-error');
+    pwEl.classList.remove('is-error');
+
+    if (!emailEl.value || !emailEl.value.includes('@')) {
+      emailErr.style.display = '';
+      emailEl.classList.add('is-error');
+      ok = false;
+    }
+    if (!pwEl.value) {
+      pwErr.style.display = '';
+      pwEl.classList.add('is-error');
+      ok = false;
+    }
+    if (!ok) return;
+
+    // Simulate failed login for demo
+    var btn = document.getElementById('loginBtn');
+    btn.textContent = '登录中…';
+    btn.disabled = true;
+    setTimeout(function() {
+      btn.textContent = '登录';
+      btn.disabled = false;
+      alertEl.style.display = '';
+    }, 1200);
+  });
+
+  // ---- Register form: password match ----
+  document.getElementById('registerForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var pw1 = document.getElementById('reg-password').value;
+    var pw2 = document.getElementById('reg-password2').value;
+    var matchErr = document.getElementById('reg-pw-match-err');
+    document.getElementById('reg-password2').classList.remove('is-error');
+    matchErr.style.display = 'none';
+    if (pw1 !== pw2) {
+      matchErr.style.display = '';
+      document.getElementById('reg-password2').classList.add('is-error');
+    }
+  });
+
+  // ---- Dark mode toggle ----
+  var toggle = document.getElementById('themeToggle');
+  var icon   = document.getElementById('themeIcon');
+  toggle.addEventListener('click', function() {
+    document.documentElement.classList.toggle('dark');
+    icon.textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙';
+  });
+</script>
+
+</body>
+</html>
