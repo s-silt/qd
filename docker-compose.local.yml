@@ -6,7 +6,7 @@ services:
   qd:
     build:
       context: .
-      dockerfile: Dockerfile.local
+      dockerfile: Dockerfile
     image: s-silt/qd:local
     container_name: qd
     depends_on:
@@ -15,6 +15,7 @@ services:
       - "8923:80"
     volumes:
       - "./config:/usr/src/app/config"
+    shm_size: 1gb  # Playwright 需要共享内存
     environment:
       # === 基础设置（生产环境务必修改下面三项）===
       - DOMAIN=
@@ -24,6 +25,12 @@ services:
       # === Redis ===
       - REDISCLOUD_URL=redis://redis:6379
 
+      # === Playwright 内置抓包配置 ===
+      - PLAYWRIGHT_HEADLESS=true
+      - PLAYWRIGHT_MAX_CONCURRENT=2
+      - PLAYWRIGHT_DEFAULT_TIMEOUT_MS=60000
+      # - PLAYWRIGHT_ALLOW_HOSTS=example.com,foo.com  # 白名单，防 SSRF
+
       # === AI 辅助签到模板生成（兼容 OpenAI 协议）===
       # 取消注释并填入 API Key 即可启用 HAR 编辑器右上角 "AI 智能识别签到" 按钮
       # - AI_API_KEY=sk-xxxxxxxxxxxxxxxx
@@ -31,12 +38,6 @@ services:
       # - AI_MODEL=deepseek-chat
       # - AI_TIMEOUT=60
       # - AI_MAX_HAR_ENTRIES=60
-
-      # === URL 自动抓包（Playwright sidecar）===
-      # 启用下方 playwright 服务后取消下行注释, 即可在 HAR 编辑器
-      # 使用 "URL 自动抓包" 按钮, 配合 Cookie/storage_state 自动录 HAR
-      # - PLAYWRIGHT_SIDECAR_URL=http://playwright:8924
-      # - PLAYWRIGHT_CAPTURE_TIMEOUT=120
 
       # === 其他常用项（按需启用）===
       # - QD_DEBUG=False
@@ -58,44 +59,3 @@ services:
     volumes:
       - ./redis/data:/data:rw
     restart: unless-stopped
-
-  # ─── URL 自动抓包 sidecar (二选一) ────────────────────────────────
-  # 两个版本接口完全兼容, QD 主端用 PLAYWRIGHT_SIDECAR_URL 选择即可。
-  # 默认启用 Python 版 (功能最完整), 想用更轻量的 Go 版就改 QD 的
-  # PLAYWRIGHT_SIDECAR_URL=http://playwright-go:8924, 把 playwright 段
-  # 注释掉, 取消 playwright-go 段的注释。
-
-  # Playwright Python 版 - 镜像约 1.5GB, 完整 HAR 字段, 支持 locale/timezone
-  playwright:
-    build:
-      context: ./services/playwright
-      dockerfile: Dockerfile
-    image: s-silt/qd-playwright:local
-    container_name: qd-playwright
-    environment:
-      - HEADLESS=true
-      - MAX_CONCURRENT=2
-      - DEFAULT_TIMEOUT_MS=60000
-      # - ALLOW_HOSTS=example.com,foo.com
-    shm_size: 1gb
-    expose:
-      - "8924"
-    restart: unless-stopped
-
-  # Playwright Go 版 - 镜像约 250MB, 启动快, HAR 字段稍简
-  # 想用 Go 版: 取消注释, 同时把上面 playwright 段注释掉
-  # playwright-go:
-  #   build:
-  #     context: ./services/playwright-go
-  #     dockerfile: Dockerfile
-  #   image: s-silt/qd-playwright-go:local
-  #   container_name: qd-playwright-go
-  #   environment:
-  #     - HEADLESS=true
-  #     - MAX_CONCURRENT=2
-  #     - DEFAULT_TIMEOUT_MS=60000
-  #     # - ALLOW_HOSTS=example.com,foo.com
-  #   shm_size: 1gb
-  #   expose:
-  #     - "8924"
-  #   restart: unless-stopped

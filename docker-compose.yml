@@ -1,8 +1,6 @@
 services:
   qd:
-    image: qdtoday/qd:latest
-    # image: qdtoday/qd:lite-latest # 精简版
-    # image: qdtoday/qd:dev # 开发版
+    build: .
     container_name: qd
     depends_on:
       - redis
@@ -10,123 +8,27 @@ services:
       - "8923:80"
     volumes:
       - "./config:/usr/src/app/config"
+    shm_size: 1gb  # Playwright 需要共享内存
     environment:
-      # - QD_DEBUG=False
-      # - BIND=0.0.0.0
-      # - PORT=80
-      # - MULTI_PROCESS=False
-      # - AUTO_RELOAD=False
-      # - GZIP=True
-      # - ACCESS_LOG=True
-      # - DISPLAY_IMPORT_WARNING=True
-      # - USER0ISADMIN=True
-      # - STATIC_URL_PREFIX=/static/
       - DOMAIN=
-      # - COOKIE_DAY=5
-      # - COOKIE_SECURE_MODE=False
       - COOKIE_SECRET=binux
       - PBKDF2_ITERATIONS=600000
       - AES_KEY=binux
-      # - DB_TYPE=sqlite3
-      # - JAWSDB_MARIA_URL=mysql://user:pass@localhost:3306/dbname?auth_plugin=
-      # - QD_SQL_LOGGING_NAME=QD.sql
-      # - QD_SQL_LOGGING_LEVEL=WARNING
-      # - QD_SQL_POOL_LOGGING_NAME=QD.sql.pool
-      # - QD_SQL_POOL_LOGGING_LEVEL=WARNING
-      # - QD_SQL_POOL_SIZE=5
-      # - QD_SQL_MAX_OVERFLOW=10
-      # - QD_SQL_POOL_PRE_PING=True
-      # - QD_SQL_POOL_RECYCLE=3600
-      # - QD_SQL_POOL_TIMEOUT=30
-      # - QD_SQL_POOL_USE_LIFO=True
       - REDISCLOUD_URL=redis://redis:6379
-      # - REDIS_DB_INDEX=1
-      # - QD_EVIL=1000
-      # - EVIL_PASS_LAN_IP=True
-      # - WORKER_METHOD=Queue
-      # - QUEUE_NUM=50
-      # - CHECK_TASK_LOOP=500
-      # - TASK_MAX_RETRY_COUNT=8
-      # - NEW_TASK_DELAY=1
-      # - TASK_WHILE_LOOP_TIMEOUT=900
-      # - TASK_REQUEST_LIMIT=1500
-      # - DOWNLOAD_SIZE_LIMIT=5242880
-      # - REQUEST_TIMEOUT=30.0
-      # - CONNECT_TIMEOUT=30.0
-      # - DELAY_MAX_TIMEOUT=29.9
-      # - UNSAFE_EVAL_TIMEOUT=3.0
-      # - USE_PYCURL=True
-      # - ALLOW_RETRY=True
-      # - DNS_SERVER=
-      # - CURL_ENCODING=True
-      # - CURL_CONTENT_LENGTH=True
-      # - NOT_RETRY_CODE=301|302|303|304|305|307|400|401|403|404|405|407|408|409|410|412|415|413|414|500|501|502|503|504|599
-      # - EMPTY_RETRY=True
-      # - TRACEBACK_PRINT=False
-      # - PUSH_PIC_URL=https://gitee.com/qd-today/qd/raw/master/web/static/img/push_pic.png
-      # - PUSH_BATCH_SW=True
-      # - PUSH_BATCH_DELTA=60
-      # - WS_PING_INTERVAL=5
-      # - WS_PING_TIMEOUT=30
-      # - WS_MAX_MESSAGE_SIZE=10485760
-      # - WS_MAX_QUEUE_SIZE=100
-      # - WS_MAX_CONNECTIONS_SUBSCRIBE=30
-      # - SUBSCRIBE_ACCELERATE_URL=qd-ph
-      # - PROXIES=
-      # - PROXY_DIRECT_MODE=regexp
-      # - PROXY_DIRECT=(?xi)\A([a-z][a-z0-9+\-.]*://)?(0(.0){3}|127(.0){2}.1|localhost|\[::([\d]+)?\])(:[0-9]+)?
-      # - NOTEPAD_LIMIT=20
-      # - EXTRA_ONNX_NAME=
-      # - EXTRA_CHARSETS_NAME=
-      # - MAIL_SMTP=
-      # - MAIL_PORT=465
-      # - MAIL_SSL=True
-      # - MAIL_STARTTLS=False
-      # - MAIL_USER=
-      # - MAIL_PASSWORD=
-      # - MAIL_FROM=${MAIL_USER}
-      # - MAIL_DOMAIN_HTTPS=False
-      # - MAILGUN_KEY=
-      # - MAILGUN_DOMAIN=${DOMAIN}
-      # - GA_KEY=
-      # AI 辅助签到模板生成（兼容 OpenAI Chat Completions 协议）
-      # 设置 AI_API_KEY 后，HAR 编辑器右上角会出现 "AI 智能识别签到" 按钮
+      # Playwright 配置
+      - PLAYWRIGHT_HEADLESS=true
+      - PLAYWRIGHT_MAX_CONCURRENT=2
+      - PLAYWRIGHT_DEFAULT_TIMEOUT_MS=60000
+      # - PLAYWRIGHT_ALLOW_HOSTS=example.com,foo.com  # 白名单，防 SSRF
+      # AI 辅助签到
       # - AI_API_KEY=
       # - AI_BASE_URL=https://api.openai.com/v1
       # - AI_MODEL=gpt-4o-mini
       # - AI_TIMEOUT=60
-      # - AI_MAX_HAR_ENTRIES=60
-      # URL 自动抓包 (Playwright sidecar)
-      # 启用下方 playwright (Python ~1.5GB) 或 playwright-go (~250MB) 之一
-      # - PLAYWRIGHT_SIDECAR_URL=http://playwright:8924
-      # - PLAYWRIGHT_CAPTURE_TIMEOUT=120
-
-  # Playwright Python 版 sidecar (~1.5GB, 完整 HAR 字段)
-  # playwright:
-  #   build:
-  #     context: ./services/playwright
-  #   shm_size: 1gb
-  #   expose: ["8924"]
-  #   environment:
-  #     - HEADLESS=true
-  #     - MAX_CONCURRENT=2
-
-  # Playwright Go 版 sidecar (~250MB, 启动快, HAR 字段稍简)
-  # 二选一启用; 要用 Go 版就把 PLAYWRIGHT_SIDECAR_URL 指向 http://playwright-go:8924
-  # playwright-go:
-  #   build:
-  #     context: ./services/playwright-go
-  #   shm_size: 1gb
-  #   expose: ["8924"]
-  #   environment:
-  #     - HEADLESS=true
-  #     - MAX_CONCURRENT=2
 
   redis:
     image: redis:alpine
     container_name: redis
     command: ["--loglevel warning"]
-    # command: redis-server /usr/local/etc/redis/redis.conf
     volumes:
-      # - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:rw
       - ./redis/data:/data:rw
