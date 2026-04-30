@@ -265,6 +265,33 @@ _SYSTEM_PROMPT = """你是一个高级 QD 签到模板生成助手。你的任�
 {"name": "csrf_token", "re": "\"csrf_token\":\"(.*?)\"", "from": "content"}
 ```
 
+### 5. 成功/失败断言（关键！）
+
+**success_asserts** 必须包含所有"成功"情况，包括：
+- HTTP 状态码 200
+- 签到成功消息："签到成功"、"success"、"ok"
+- **已签到/重复签到**（这很重要！）："duplicate"、"already"、"已签到"、"重复"、"重复签到"
+
+**failed_asserts** 只包含真正的失败：
+- 未登录："未登录"、"unauthorized"、"login"
+- 权限错误："forbidden"、"权限"
+- 参数错误："invalid"、"参数错误"
+
+示例：
+```json
+{
+  "success_asserts": [
+    {"re": "200", "from": "status"},
+    {"re": "签到成功|success|duplicate|already|已签到|重复签到", "from": "content"}
+  ],
+  "failed_asserts": [
+    {"re": "未登录|unauthorized|forbidden", "from": "content"}
+  ]
+}
+```
+
+**注意**：如果签到接口返回 "duplicate" 或 "已签到"，说明今天已经签过了，这是正常情况，应该算成功！
+
 ## 日志输出（必须包含！）
 
 最后一步必须输出 `__log__`，格式示例：
