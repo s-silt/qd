@@ -4,11 +4,16 @@ FROM python:3.10-slim
 # 维护者信息
 LABEL maintainer="sxl"
 
+# 设置非交互式安装
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
+
 # 设置工作目录
 WORKDIR /usr/src/app
 
 # 安装系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata \
     # Playwright 依赖
     libnss3 \
     libatk-bridge2.0-0 \
@@ -26,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # 其他依赖
     openssh-client \
     curl \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件
