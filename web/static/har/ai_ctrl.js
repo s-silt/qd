@@ -74,9 +74,21 @@
       // 把 AI 给出的精简 HAR 应用到编辑器
       $scope.apply = function() {
         if (!$scope.result || !$scope.result.har) return;
+        // AI 返回的是 QD 模板数组，需要包装成标准 HAR 格式
+        var harData = $scope.result.har;
+        // 如果是数组（QD 模板格式），包装成 {log: {entries: [...]}}
+        if (Array.isArray(harData)) {
+          harData = {
+            log: {
+              version: '1.2',
+              creator: {name: 'QD AI', version: '1.0'},
+              entries: harData
+            }
+          };
+        }
         var loaded = {
           filename: ($scope.result.result && $scope.result.result.sitename) || 'AI 生成模板',
-          har: analysis.analyze($scope.result.har, {}),
+          har: analysis.analyze(harData, {}),
           upload: true
         };
         loaded.env = {};
