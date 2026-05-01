@@ -2,8 +2,6 @@
 
 > QD 框架在 HAR 编辑器中内置了 **AI 智能识别签到** 功能：上传抓包后一键调用大模型，自动从几十上百条请求中挑出真正的签到接口，跳过手动剔除噪声请求的繁琐过程。
 
-> 本教程基于 PR：`feat: AI 智能签到识别 + worker N+1 优化与安全告警`。
-
 ## 一、功能概述
 
 - **输入**：浏览器或客户端导出的 HAR 文件（参见 [HAR 抓包教程](./har-capture.md)）。
@@ -11,6 +9,10 @@
 - **底层协议**：兼容 OpenAI Chat Completions（`/v1/chat/completions`）。
   - 可对接 **OpenAI**、**DeepSeek**、**通义千问**、**Moonshot**、**OpenRouter** 等云服务；
   - 也可对接 **本地 Ollama / LM Studio / vLLM**（开启 OpenAI 兼容模式即可）。
+- **智能识别**：
+  - 自动识别多步签到流程（获取 token → 签到 → 查询结果）
+  - 自动处理重复签到（duplicate/already/已签到）不误判为失败
+  - 自动生成 `__log__` 日志输出，显示签到结果
 
 ---
 
@@ -91,10 +93,9 @@ curl http://your-qd-host:8923/har/ai_status
 3. 点 **开始分析**，等待 5-30 秒（取决于模型与网络）。
 4. 分析完成后弹窗下方会显示 AI 给出的 JSON 结果，包括：
    - `sitename` / `siteurl` / `note` —— 站点信息建议
-   - `entries[]` —— 识别出的关键请求（含原始 URL、Method、Body、识别理由）
+   - `har[]` —— 识别出的 QD 模板（含请求、断言、变量提取、日志输出）
    - `variables[]` —— 提示你需要补哪些变量（通常是 cookie / token）
-   - `success_keyword` —— 签到成功响应中的关键字
-5. 检查无误后点 **应用为当前模板**：编辑器中所有原始请求会被替换为 AI 给出的最小集合。
+5. 检查无误后点 **应用到当前模板**：编辑器中所有原始请求会被替换为 AI 给出的最小集合。
 
 ### 第 4 步：补充变量并测试
 
@@ -109,7 +110,53 @@ curl http://your-qd-host:8923/har/ai_status
 
 ---
 
-## 四、提示词使用建议
+## 四、AI 生成模板的特点
+
+### 4.1 多步签到识别
+
+AI 能识别复杂的多步签到流程，例如：
+
+- **获取 token → 签到**：先 GET 页面提取 csrf/token，再 POST 签到
+- **获取签到信息 → 执行签到 → 查询结果**：三步流程
+- **多任务签到**：多个独立的签到接口（签到 + 抽奖 + 领积分）
+
+### 4.2 重复签到处理
+
+AI 生成的模板会自动处理重复签到情况：
+
+```json
+{
+  "success_asserts": [
+    {"re": "200", "from": "status"},
+    {"re": "签到成功|success|duplicate|already|已签到|重复签到", "from": "content"}
+  ]
+}
+```
+
+这意味着当接口返回 `duplicate` 或 `已签到` 时，任务仍会被判定为成功，不会误报失败。
+
+### 4.3 日志输出
+
+AI 会在模板最后自动添加 `__log__` 输出步骤，显示签到结果：
+
+```json
+{
+  "request": {
+    "method": "POST",
+    "url": "api://util/unicode",
+    "data": "content=签到结果：{{msg}} 获得积分：{{points}}"
+  },
+  "rule": {
+    "extract_variables": [
+      {"name": "__log__", "re": "\"转换后\": \"(.*)\"", "from": "content"}
+    ]
+  }
+}
+```
+
+---
+
+## 五、提示词使用建议
 
 提示词不是必填，但能显著提高识别精度。以下是典型场景：
 
@@ -120,7 +167,7 @@ curl http://your-qd-host:8923/har/ai_status
 
 ---
 
-## 五、AI 工作原理（FAQ）
+## 六、AI 工作原理（FAQ）
 
 **Q: AI 会泄漏我的 Cookie / Token 吗？**
 - 后端在送给 AI 之前会做预处理：仅保留 `Content-Type` / `Referer` / `Origin` / `Authorization` / `X-CSRF-Token` 等少量必要 header；Cookie 只送 **名称**（不送值）；请求体超过 500 字符会截断。
@@ -132,6 +179,9 @@ curl http://your-qd-host:8923/har/ai_status
 - 改用更强的模型（如 `gpt-4o`、`deepseek-chat`、`qwen2.5-72b-instruct`）。
 - 若仍不行，AI 给出的 JSON 可作为参考，手动在编辑器里调整请求列表。
 
+**Q: 签到返回 duplicate/already 但模板显示失败？**
+- 这说明 AI 生成的模板没有正确处理重复签到。重新运行 AI 分析，或手动在 `success_asserts` 中添加 `duplicate|already|已签到` 关键字。
+
 **Q: 一次请求消耗多少 Token？**
 - HAR 经预处理后每条 entry 大概 0.2-0.5 KB，默认上限 60 条 = ~30 KB ≈ 8K-12K input tokens。
 - 输出极短（一般 < 1K tokens）。
@@ -141,6 +191,11 @@ curl http://your-qd-host:8923/har/ai_status
 - 模型服务挂了或被墙，换 `AI_BASE_URL`。
 - 调高 `AI_TIMEOUT`（最大可设到 300 秒）。
 - HAR 太大，调小 `AI_MAX_HAR_ENTRIES`（如 30）。
+
+**Q: 点「应用到当前模板」按钮没反应？**
+- 确保 AI 分析已完成并显示了结果。
+- 如果结果为空，重新运行分析。
+- 刷新页面后重试。
 
 **Q: 我能否在没有图形界面的情况下调用？**
 - 可以。后端暴露了 REST 接口：
@@ -152,11 +207,11 @@ curl http://your-qd-host:8923/har/ai_status
        --data-binary @payload.json
   # payload.json: {"har": <HAR JSON>, "hint": "每日签到"}
   ```
-  返回 `{ok: true, har: ..., result: ...}`。
+  返回 `{ok: true, har: [...], result: {...}}`。
 
 ---
 
-## 六、安全与合规
+## 七、安全与合规
 
 1. **不要把生产 API Key 写进公共仓库**。Docker 部署用 `.env` 文件；裸机部署用 `local_config.py` 并加入 `.gitignore`。
 2. **抓包前阅读目标站点的服务条款**：自动化签到在某些站点上是被允许的（积分、签到送奖励），在某些 SaaS 上明确禁止 —— 自己评估风险。
@@ -165,9 +220,10 @@ curl http://your-qd-host:8923/har/ai_status
 
 ---
 
-## 七、相关链接
+## 八、相关链接
 
 - [QD 官方文档](https://qd-today.github.io/qd/zh_CN/)
 - [HAR 抓包教程](./har-capture.md)
+- [URL 自动抓包](./auto-capture.md)
 - [使用指南：如何使用](./how-to-use.md)
 - [常见问题](./faq.md)

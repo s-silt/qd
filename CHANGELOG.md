@@ -8,7 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Features
 
-1. Feature(playwright-go): 🦫 新增 **Go 版 Playwright sidecar**（`services/playwright-go/`）作为 Python 版的轻量替代，**接口与 Python 版 100% 兼容**，QD 主端只需切换 `PLAYWRIGHT_SIDECAR_URL`：
+1. Feature(get-cookies): 🍪 集成 **Get-Cookies 浏览器扩展**功能到主项目：
+   - 新增 `/get_cookies/page` 网页端 Cookie 获取页面（现代扁平化 UI）
+   - 新增 `/get_cookies` API 接口
+   - 支持输入 URL 后自动打开浏览器，用户登录后一键提取 Cookie
+   - Cookie 可直接复制或用于创建签到模板
+2. Feature(playwright-go): 🦫 新增 **Go 版 Playwright sidecar**（`services/playwright-go/`）作为 Python 版的轻量替代，**接口与 Python 版 100% 兼容**，QD 主端只需切换 `PLAYWRIGHT_SIDECAR_URL`：
    - 镜像 ~250MB（vs Python ~1.5GB），启动快、内存占用低
    - 用 [chromedp](https://github.com/chromedp/chromedp) + headless-shell，自带 HAR 1.2 录制器（监听 CDP `Network.*` 事件拼装）
    - `services/playwright-go/{main,capture,har,security,button_finder}.go` + 35 个 Go 单元测试
@@ -37,6 +42,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Tests
 
 1. Test(go): ✅ 新增 35 个 Go 单元测试覆盖 `services/playwright-go/` 的 button_finder 打分、storage_state 跨域剔除、cookie 解析等纯逻辑
+
+## [20260501] - 2026.05.01 更新（s-silt fork）
+
+### Features
+
+1. Feature(get-cookies): 🍪 集成 **Get-Cookies** 功能到主项目，新增 `/get_cookies/page` 网页端 Cookie 获取页面
+2. Feature(Playwright): 🪄 **Playwright 自动抓包集成到主项目**，无需独立 sidecar 容器
+3. Feature(AI): 🤖 AI 生成模板优化：自动处理重复签到（duplicate/already/已签到）、自动生成 `__log__` 日志输出
+
+### Fixed
+
+1. Bugfix(AI): 🐛 修复 AI 生成模板「应用到当前模板」按钮无响应问题（数据格式兼容）
+2. Bugfix(AI): 🐛 修复签到返回 duplicate/already 时误判为失败的问题
+
+### Docs
+
+1. Docs(zh_CN): 📖 全面更新教程文档，移除 sidecar 架构引用，更新为内置 Playwright 方案
+2. Docs(zh_CN): 📖 更新 FAQ，新增 AI 和 Playwright 相关问题解答
 
 ## [20260429] - 2026.04.29 更新（s-silt fork）
 

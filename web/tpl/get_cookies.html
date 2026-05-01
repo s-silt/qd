@@ -323,7 +323,7 @@ body {
     </div>
 
     <div class="card">
-        <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">功能说明</h3>
+        <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">更多获取方式</h3>
         <div class="features">
             <div class="feature-item">
                 <div class="feature-icon">🔐</div>
@@ -346,6 +346,32 @@ body {
                     <p>只获取目标站点的 Cookie，排除无关项</p>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Chrome 浏览器扩展</h3>
+        <p style="color: var(--gray-500); font-size: 14px; margin-bottom: 16px;">
+            安装 Get-Cookies 浏览器扩展，可在任意网页一键获取 Cookie 并自动填入 QD 框架。
+        </p>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <a href="/get_cookies/extension" class="btn btn-primary" download="get-cookies-extension.zip">
+                下载扩展（ZIP）
+            </a>
+            <a href="https://chromewebstore.google.com/detail/cookies%E8%8E%B7%E5%8F%96%E5%8A%A9%E6%89%8B/mmcdaoockinhaeiljdmjmnjfndpfpklo" class="btn btn-secondary" target="_blank">
+                Chrome 商店安装
+            </a>
+        </div>
+        <div style="margin-top: 16px; padding: 16px; background: var(--gray-50); border-radius: var(--radius);">
+            <h4 style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">安装步骤：</h4>
+            <ol style="font-size: 13px; color: var(--gray-700); padding-left: 20px; line-height: 2;">
+                <li>下载上方 ZIP 文件并解压到本地文件夹</li>
+                <li>打开 Chrome 浏览器，访问 <code>chrome://extensions/</code></li>
+                <li>开启右上角「开发者模式」</li>
+                <li>点击「加载已解压的扩展程序」，选择解压后的文件夹</li>
+                <li>在扩展选项中填入 QD 框架地址（如 <code>http://your-qd-host:8923</code>）</li>
+                <li>在目标网站点击扩展图标即可一键获取 Cookie</li>
+            </ol>
         </div>
     </div>
 </div>
