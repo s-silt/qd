@@ -808,6 +808,40 @@ class GetCookiesAPI(BaseHandler):
         await self.finish(result)
 
 
+class GetCookiesExtension(BaseHandler):
+    """下载 Get-Cookies 浏览器扩展（ZIP 包）。"""
+
+    async def get(self) -> None:
+        import io
+        import os
+        import zipfile
+
+        extension_dir = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "static",
+            "get-cookies-extension",
+        )
+
+        if not os.path.isdir(extension_dir):
+            self.set_status(404)
+            await self.finish({"ok": False, "error": "扩展文件不存在"})
+            return
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(extension_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arc_name = os.path.relpath(file_path, extension_dir)
+                    zf.write(file_path, arc_name)
+
+        self.set_header("Content-Type", "application/zip")
+        self.set_header(
+            "Content-Disposition", 'attachment; filename="get-cookies-extension.zip"'
+        )
+        await self.finish(buf.getvalue())
+
+
 handlers = [
     (r"/tpl/(\d+)/edit", HAREditor),
     (r"/tpl/(\d+)/save", HARSave),
@@ -820,4 +854,5 @@ handlers = [
     (r"/har/auto_capture_status", HARAutoCaptureStatus),
     (r"/get_cookies", GetCookiesAPI),
     (r"/get_cookies/page", GetCookiesPage),
+    (r"/get_cookies/extension", GetCookiesExtension),
 ]

@@ -1,15 +1,14 @@
 # URL 自动抓包（Playwright）
 
-> 在 [HAR 抓包教程](./har-capture.md) 与 [AI 自动生成签到模板](./ai-sign-template.md) 的基础上，本功能进一步把「打开浏览器、点击签到按钮、导出 HAR」这一步自动化：用户只要给 URL + 登录态（Cookie 或 storage_state），QD 就用 Playwright 在容器里跑完整流程并自动喂给 AI 分析，直接产出可保存的模板。
+> 在 [HAR 抓包教程](./har-capture.md) 与 [AI 自动生成签到模板](./ai-sign-template.md) 的基础上，本功能进一步把「打开浏览器、点击签到按钮、导出 HAR」这一步自动化：用户只要给 URL + 登录态（Cookie），QD 就用内置的 Playwright 在服务端跑完整流程并自动喂给 AI 分析，直接产出可保存的模板。
 
-## 一、架构与权衡
+## 一、功能概述
 
 ```
 ┌──────────────┐    POST URL+Cookie    ┌──────────────────────┐
-│ QD HAR 编辑器 │  ───────────────────► │ Playwright sidecar   │
-│ "URL 自动抓包" │                       │ (独立容器, ~1.5GB)    │
-└──────┬───────┘                       │  1. 注入 cookie       │
-       │                               │  2. 加载页面          │
+│ QD HAR 编辑器 │  ───────────────────► │ QD 内置 Playwright   │
+│ "URL 自动抓包" │                       │  1. 注入 cookie       │
+└──────┬───────┘                       │  2. 加载页面          │
        │                               │  3. 启发式找签到按钮  │
        │  HAR + 候选按钮                │  4. 点击 → 录制 HAR   │
        │ ◄─────────────────────────────│                       │
@@ -24,52 +23,57 @@
   2. 文本启发式：DOM 内匹配 `签到 / 打卡 / 每日 / sign in / check-in / claim` 等关键字（同时降权 `登录 / 退出` 等噪声）
   3. 都失败：返回 top 10 候选按钮，用户挑一个填回 selector 重试
 - **反检测最小集**：抹掉 `navigator.webdriver`、随机点击延迟、设置中文 locale + 中国时区
-- **资源**：每次抓包约 5-30 秒、~250 MB RAM、并发由 `MAX_CONCURRENT` 限制
+- **资源**：每次抓包约 5-30 秒、~250 MB RAM、并发由 `PLAYWRIGHT_MAX_CONCURRENT` 限制
 
 ## 二、启用方法
 
-### 2.1 docker-compose 部署（推荐）
+### 2.1 环境要求
 
-[docker-compose.local.yml](../../../docker-compose.local.yml) 已自带 `playwright` 服务声明，启用步骤：
+Playwright 已集成到 QD 主项目中，无需额外部署 sidecar 容器。只需确保：
 
-1. 取消 QD 服务下这两行注释：
+1. 系统已安装 Playwright 及 Chromium 浏览器
+2. Docker 部署时，镜像已包含 Playwright 依赖
 
-   ```yaml
-   - PLAYWRIGHT_SIDECAR_URL=http://playwright:8924
-   - PLAYWRIGHT_CAPTURE_TIMEOUT=120
-   ```
+### 2.2 Docker 部署（推荐）
 
-2. 重建并启动：
+使用本 fork 的 `Dockerfile` 构建镜像，已自动包含 Playwright + Chromium：
 
-   ```bash
-   docker compose -f docker-compose.local.yml up -d --build
-   ```
+```bash
+git clone https://github.com/s-silt/qd.git
+cd qd
+docker compose -f docker-compose.local.yml up -d --build
+```
 
-   首次构建 sidecar 大约 3-8 分钟（要拉 ~1.5GB 镜像 + 装中文字体）。
+首次构建大约 3-8 分钟（安装 Playwright + Chromium + 中文字体）。
 
-3. 在 QD 主容器内验证：
+### 2.3 源码部署
 
-   ```bash
-   docker compose -f docker-compose.local.yml exec qd \
-       wget -qO- http://playwright:8924/health
-   # {"ok":true,"headless":true,"max_concurrent":2,"browser_ready":true}
-   ```
+```bash
+# 安装 Playwright
+pip install playwright>=1.40.0
+playwright install chromium
+playwright install-deps chromium
 
-### 2.2 不想要时如何关闭
+# 启动 QD
+python run.py
+```
 
-- 完全不需要：把 `docker-compose.local.yml` 里整段 `playwright:` 服务注释掉，并保留 `PLAYWRIGHT_SIDECAR_URL` 注释。
-- 临时停用：`docker compose stop playwright`。QD 里按钮会自动变灰。
+### 2.4 验证是否启用
 
-### 2.3 调优环境变量
+打开 HAR 编辑器页面，右上角出现 **「URL 自动抓包」** 按钮即表示启用成功。
 
-在 `playwright` 服务的 `environment:` 段添加：
+也可以检查日志，如果看到 `Playwright 已就绪` 字样说明初始化成功。
+
+### 2.5 调优环境变量
+
+在 `docker-compose.local.yml` 或环境变量中配置：
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `HEADLESS` | `true` | debug 时设 `false`，但需要 X server |
-| `MAX_CONCURRENT` | `2` | 并发抓包数；提高需要更多内存 |
-| `DEFAULT_TIMEOUT_MS` | `60000` | 单次抓包总超时 ms |
-| `ALLOW_HOSTS` | 空 | 域名白名单 `example.com,foo.com`，留空允许全部，**生产强烈建议设置** |
+| `PLAYWRIGHT_HEADLESS` | `true` | debug 时设 `false`，但需要 X server |
+| `PLAYWRIGHT_MAX_CONCURRENT` | `2` | 并发抓包数；提高需要更多内存 |
+| `PLAYWRIGHT_DEFAULT_TIMEOUT_MS` | `60000` | 单次抓包总超时 ms |
+| `PLAYWRIGHT_ALLOW_HOSTS` | 空 | 域名白名单 `example.com,foo.com`，留空允许全部，**生产强烈建议设置** |
 
 ## 三、操作步骤
 
@@ -83,6 +87,7 @@
 
 - **简单做法**：右键 → "Copy all as cURL"，从 cURL 命令里复制 `Cookie:` 头那一行
 - **干净做法**：用 [QD get-cookies 浏览器扩展](https://github.com/qd-today/get-cookies)（仓库已自带集成），点一下导出标准格式
+- **网页获取**：QD 内置了 Cookie 获取页面，访问 `/get_cookies/page` 即可使用
 
 ### 第 3 步：使用 QD 自动抓包
 
@@ -91,14 +96,13 @@
 3. 填写：
    - **URL**：签到页面的网址（不是首页！是看得到签到按钮的那个页面）
    - **Cookie**：刚才复制的 `k1=v1; k2=v2 ...`
-   - **storage_state JSON**（可选）：如果你有完整 storage_state 文件就贴进来，会比 Cookie 更全（包括 localStorage）
    - **提示词**（推荐填）：`每日签到` / `积分领取` / `打卡` 等
    - **CSS Selector**（可选）：如果第一次跑后系统给出了候选清单，再回来填
    - **抓到 HAR 后自动调用 AI 分析**：默认勾选，需要先配置 `AI_API_KEY`
 4. 点 **开始抓包**，等 5-30 秒
 5. 看到结果：
-   - ✅ 找到签到按钮 → 直接点 **应用为当前模板**
-   - ❌ 没找到 → 看下方候选按钮列表，点击文字应用为 selector，再 **开始抓包** 一次
+   - 找到签到按钮 → 直接点 **应用为当前模板**
+   - 没找到 → 看下方候选按钮列表，点击文字应用为 selector，再 **开始抓包** 一次
 
 ### 第 4 步：补充变量并测试
 
@@ -114,26 +118,44 @@
 
 三者可以叠加：自动抓包 → 自动喂给 AI → 应用为模板 = 一气呵成。
 
-## 五、Cookie 失效与维护
+## 五、Cookie 获取方式
+
+QD 提供了多种 Cookie 获取方式：
+
+### 5.1 浏览器 DevTools 手动复制
+
+1. 在目标网站按 `F12` 打开开发者工具
+2. 切到 **Application** → **Cookies**
+3. 复制所有 Cookie 值，格式为 `name1=value1; name2=value2`
+
+### 5.2 QD 内置 Cookie 获取页面
+
+访问 `http://your-qd-host:8923/get_cookies/page`，输入目标网站 URL，QD 会打开浏览器让你登录，然后自动提取 Cookie。
+
+### 5.3 Get-Cookies 浏览器扩展
+
+安装 [QD get-cookies 扩展](https://github.com/qd-today/get-cookies)，在目标网站点击扩展图标即可一键复制。
+
+## 六、Cookie 失效与维护
 
 Cookie 不是永久的（短则一天、长则数月）。以下三种情况都会让自动抓包失败：
 
-1. **Cookie 过期**：sidecar 检测到页面被重定向到 `login` 类 URL，会返回错误「登录态可能已失效」
-2. **网站升级反爬**：开始检测 `navigator.webdriver` 之外的指纹（Canvas、字体、WebGL）—— 极少站点会这样，可以在 sidecar 里加 `playwright-stealth`，但维护成本高
-3. **风控弹窗**：有的站点偶尔会弹「请验证你不是机器人」滑块，这种我们不主动处理（机器无法稳定通过），需要你重新在浏览器里完成验证后再复制 Cookie
+1. **Cookie 过期**：检测到页面被重定向到 `login` 类 URL，会返回错误「登录态可能已失效」
+2. **网站升级反爬**：开始检测 `navigator.webdriver` 之外的指纹（Canvas、字体、WebGL）—— 极少站点会这样
+3. **风控弹窗**：有的站点偶尔会弹「请验证你不是机器人」滑块，这种需要你重新在浏览器里完成验证后再复制 Cookie
 
 **建议**：把抓包当作「**生成模板的一次性动作**」，模板本身仍由原 QD 框架定时执行——一次抓包 = 多次签到，Cookie 失效就重抓一次。
 
-## 六、安全注意
+## 七、安全注意
 
-1. **Cookie 等同账号**：sidecar 容器和 QD 容器之间走内部网络（compose service name），**绝对不要把 sidecar 端口暴露到公网**。`docker-compose.local.yml` 里 `playwright` 服务用的是 `expose:` 而不是 `ports:`，已默认只对 compose 网络可见。
-2. **建议设置 `ALLOW_HOSTS`**：限制 sidecar 只能访问指定 host，避免 SSRF（攻击者通过 `/har/auto_capture` 让 sidecar 访问内网服务）。
+1. **Cookie 等同账号**：Cookie 仅在 QD 服务端使用，**绝对不要把 Cookie 暴露给不可信的服务**。
+2. **建议设置 `PLAYWRIGHT_ALLOW_HOSTS`**：限制只能访问指定 host，避免 SSRF（攻击者通过 `/har/auto_capture` 访问内网服务）。
 3. **传给 AI 的内容已脱敏**：HAR 喂给 AI 前会过滤——只保留必要 header，Cookie 只送名称，body 截断 500 字。详见 [AI 教程](./ai-sign-template.md#五ai-工作原理faq)。
 4. **不要用别人的 Cookie**：抓包等同登录，对应的隐私和合规责任由 Cookie 持有人承担。
 
-## 七、API 参考（开发者）
+## 八、API 参考（开发者）
 
-### 主端 `POST /har/auto_capture`
+### `POST /har/auto_capture`
 
 请求需要登录（XSRF token），Body：
 
@@ -141,7 +163,6 @@ Cookie 不是永久的（短则一天、长则数月）。以下三种情况都�
 {
   "url": "https://example.com/sign",
   "cookies": "k1=v1; k2=v2",
-  "storage_state": null,
   "hint": "每日签到",
   "selector": null,
   "auto_analyze": true
@@ -163,24 +184,23 @@ Cookie 不是永久的（短则一天、长则数月）。以下三种情况都�
   "elapsed_ms": 8234,
   "ai": {
     "result": {"sitename": "...", "entries": [...]},
-    "har": {"log": {"entries": [...]}}
+    "har": [...]
   }
 }
 ```
 
-### Sidecar `POST /capture`
-
-直接调用 sidecar（仅在 compose 网络内）：
+### Cookie 获取 API
 
 ```bash
-curl -X POST http://playwright:8924/capture \
-     -H 'Content-Type: application/json' \
-     -d '{"url":"https://example.com","cookies":"k=v","hint":"签到"}'
+# 打开 Cookie 获取页面
+GET /get_cookies/page
+
+# API 方式获取 Cookie
+POST /get_cookies
+{"url": "https://example.com"}
 ```
 
-完整 schema 见 [services/playwright/app.py](../../../services/playwright/app.py)。
-
-## 八、相关文档
+## 九、相关文档
 
 - [HAR 抓包教程](./har-capture.md)
 - [AI 自动生成签到模板](./ai-sign-template.md)

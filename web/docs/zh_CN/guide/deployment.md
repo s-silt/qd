@@ -188,4 +188,26 @@ WS_MAX_QUEUE_SIZE|No|100|WebSocket 最大消息队列大小, 默认为 100
 WS_MAX_CONNECTIONS_SUBSCRIBE|No|30|WebSocket 公共模板更新页面最大连接数, 默认为 30
 SUBSCRIBE_ACCELERATE_URL|No|jsdelivr_cdn|订阅加速方式或地址, 用于加速公共模板更新, 仅适用于 GitHub. <br>[详见配置](https://github.com/qd-today/qd/blob/master/config.py)...
 
-> 详细信息请查阅[config.py](https://github.com/qd-today/qd/blob/master/config.py)
+### AI 智能识别签到配置
+
+变量名|是否必须|默认值|说明
+:-: | :-: | :-: | :-:
+AI_API_KEY|否|""|AI 服务 API Key, 留空即关闭 AI 功能
+AI_BASE_URL|否|https://api.openai.com/v1|AI 服务 Base URL, 支持 OpenAI / DeepSeek / 通义 / Moonshot / 本地 Ollama 等
+AI_MODEL|否|gpt-4o-mini|AI 模型名称
+AI_TIMEOUT|否|60|AI 单次请求超时秒数
+AI_MAX_HAR_ENTRIES|否|60|单 HAR 最多保留多少条请求送给 AI
+AI_HAR_BODY_TRUNCATE_BYTES|否|500|HAR body 截断字节数
+AI_HAR_HEADER_TRUNCATE_BYTES|否|200|HAR header 截断字节数
+
+### Playwright 自动抓包配置
+
+变量名|是否必须|默认值|说明
+:-: | :-: | :-: | :-:
+PLAYWRIGHT_HEADLESS|否|true|是否使用无头模式
+PLAYWRIGHT_MAX_CONCURRENT|否|2|最大并发抓包数
+PLAYWRIGHT_DEFAULT_TIMEOUT_MS|否|60000|单次抓包总超时(ms)
+PLAYWRIGHT_ALLOW_HOSTS|否|""|域名白名单, 逗号分隔, 留空允许全部
+PLAYWRIGHT_MAX_HAR_BYTES|否|52428800|HAR 最大字节数(默认 50MB)
+
+> 详细信息请查阅[config.py](https://github.com/s-silt/qd/blob/master/config.py)

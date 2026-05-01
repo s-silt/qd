@@ -25,7 +25,7 @@ docker run -d --name qd -p 8923:80 -v $(pwd)/qd/config:/usr/src/app/config --ENV
 
 ## 如何自己搭建 Docker 镜像?
 
-请参考此镜像的构建文件 [Dockerfile](https://github.com/qd-today/qd/blob/master/Dockerfile)。
+请参考此镜像的构建文件 [Dockerfile](https://github.com/s-silt/qd/blob/master/Dockerfile)。
 
 ## 如何查看当前框架支持的 API 和 Jinja2 模板变量?
 
@@ -33,7 +33,7 @@ docker run -d --name qd -p 8923:80 -v $(pwd)/qd/config:/usr/src/app/config --ENV
 
 ## 如何提交 bug 问题?
 
-请在遇到问题后开启 `Debug` 模式，然后将详细的错误日志提交至 [Issue](https://github.com/qd-today/qd/issues)。
+请在遇到问题后开启 `Debug` 模式，然后将详细的错误日志提交至 [Issue](https://github.com/s-silt/qd/issues)。
 
 ## QD 模板一般需要哪些请求?
 
@@ -50,6 +50,44 @@ docker run -d --name qd -p 8923:80 -v $(pwd)/qd/config:/usr/src/app/config --ENV
 为了帮助用户发起请求，终究需要记录用户名和密码。这只能靠服务器维护人员的自律来保证后端数据的安全。但在框架设计中，每个用户在存储时都使用安全密钥进行加密。使用密钥对用户数据进行加密，可以保证仅获取数据库就无法解密用户数据。（加密的用户数据包括用户上传的模板、用户为任务设置的变量等）
 
 如果还是不放心，可以自己搭建 QD 框架，下载模板在自己的服务器上运行。
+
+## AI 功能相关
+
+### AI 智能识别签到不工作？
+
+1. 检查 `AI_API_KEY` 环境变量是否设置
+2. 访问 `http://your-qd-host:8923/har/ai_status` 检查状态
+3. 确认 `AI_BASE_URL` 可访问
+4. 检查日志中的错误信息
+
+### AI 生成的模板签到返回 duplicate 但显示失败？
+
+AI 生成的模板已自动处理重复签到（包含 duplicate/already/已签到 关键字）。如果仍有问题：
+
+1. 重新运行 AI 分析
+2. 手动在 `success_asserts` 中添加 `duplicate|already|已签到` 关键字
+3. 确保 `failed_asserts` 中没有包含这些关键字
+
+### 点「应用到当前模板」按钮没反应？
+
+1. 确保 AI 分析已完成并显示了结果
+2. 刷新页面后重试
+3. 检查浏览器控制台是否有错误
+
+## Playwright 自动抓包相关
+
+### 自动抓包报错 / Chromium 崩溃？
+
+1. Docker 部署确保设置了 `shm_size: 1gb`
+2. 源码部署确保已安装 `playwright install chromium`
+3. 减少 `PLAYWRIGHT_MAX_CONCURRENT` 为 1
+4. 检查系统内存是否充足（建议 2GB+）
+
+### Cookie 获取页面打不开？
+
+1. 确认 QD 已启动且端口正确
+2. 访问 `http://your-qd-host:8923/get_cookies/page`
+3. 检查是否有权限访问（需要登录）
 
 ## 提示错误信息 `PermissionError: [Errno 1] Operation not permitted`?
 

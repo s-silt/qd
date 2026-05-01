@@ -1,6 +1,6 @@
 # Docker 部署教程（s-silt/qd fork）
 
-> 本教程介绍如何使用 [s-silt/qd](https://github.com/s-silt/qd) 这个 fork 仓库部署 QD 框架。fork 包含 AI 智能识别签到、worker N+1 优化等本仓库新增功能。
+> 本教程介绍如何使用 [s-silt/qd](https://github.com/s-silt/qd) 这个 fork 仓库部署 QD 框架。fork 包含 **AI 智能识别签到**、**内置 Playwright 自动抓包**、worker N+1 优化等新增功能。
 >
 > 官方 Dockerfile（`Dockerfile`）会在构建时从 `gitee.com:qd-today/qd` 拉取上游代码，**不会包含 fork 的修改**。所以本教程使用专为 fork 准备的 `Dockerfile.local` 与 `docker-compose.local.yml`，直接基于本地源码构建。
 
@@ -13,6 +13,7 @@
   - [必改：密钥与域名](#必改密钥与域名)
   - [使用 MySQL 替代 SQLite](#使用-mysql-替代-sqlite)
   - [启用 AI 辅助签到模板生成](#启用-ai-辅助签到模板生成)
+  - [启用 Playwright 自动抓包](#启用-playwright-自动抓包)
   - [Nginx 反向代理 + HTTPS](#nginx-反向代理--https)
 - [五、更新 / 回滚 / 备份](#五更新--回滚--备份)
 - [六、常见问题](#六常见问题)
@@ -26,7 +27,7 @@
 | 项目 | 最低 | 推荐 |
 | --- | --- | --- |
 | CPU | 1 核 | 2 核 |
-| 内存 | 512 MB | 1 GB+ |
+| 内存 | 512 MB | 2 GB+（启用 Playwright 需 2GB+） |
 | 磁盘 | 2 GB | 10 GB+ |
 | 系统 | 任意 Linux / macOS / Windows | Ubuntu 22.04+ / Debian 12+ |
 
@@ -130,8 +131,11 @@ docker run -d --name qd --restart unless-stopped \
     -e COOKIE_SECRET=$(openssl rand -hex 32) \
     -e AES_KEY=$(openssl rand -hex 32) \
     -e REDISCLOUD_URL=redis://redis:6379 \
+    --shm-size=1gb \
     s-silt/qd:local
 ```
+
+> 注意：`--shm-size=1gb` 是 Playwright Chromium 需要的共享内存，不设置可能导致浏览器崩溃。
 
 ---
 
@@ -197,6 +201,22 @@ environment:
 
 详细操作流程见 [AI 转换签到模板教程](./ai-sign-template.md)。
 
+### 启用 Playwright 自动抓包
+
+Playwright 已集成到 QD 主程序中，**无需额外部署 sidecar 容器**。构建镜像时已自动安装 Playwright + Chromium。
+
+如需调整 Playwright 参数，添加以下环境变量：
+
+```yaml
+environment:
+  - PLAYWRIGHT_HEADLESS=true              # 无头模式，默认 true
+  - PLAYWRIGHT_MAX_CONCURRENT=2           # 最大并发抓包数
+  - PLAYWRIGHT_DEFAULT_TIMEOUT_MS=60000   # 单次抓包超时（毫秒）
+  - PLAYWRIGHT_ALLOW_HOSTS=               # 域名白名单，逗号分隔
+```
+
+详细操作流程见 [URL 自动抓包教程](./auto-capture.md)。
+
 ### Nginx 反向代理 + HTTPS
 
 直接暴露 8923 不安全。生产建议在前面挂 Nginx + Let's Encrypt：
@@ -249,12 +269,14 @@ environment:
 
 | 改动 | 是否影响老模板 | 说明 |
 | --- | --- | --- |
-| 新增 AI 识别按钮 + `/har/ai_analyze` 端点 | ❌ | 纯新增功能，不点不影响任何旧逻辑 |
-| `worker.push_batch` N+1 重构 | ❌ | 只优化查询次数，推送内容、判定逻辑、调度规则一字未改 |
-| `worker.clear_log` 改批量删除 | ❌ | 一次性删过期日志 vs 逐条删，结果一致 |
-| `db.tasklog/task/tpl.list` kwargs 支持 list | ❌ | 完全向后兼容：标量走 `=`，list 才走 `IN` |
-| `run.py` 缩进修复 + 默认密钥告警 | ❌ | 只影响启动流程，不碰任务执行 |
-| 中文教程 | ❌ | 纯文档 |
+| 新增 AI 识别按钮 + `/har/ai_analyze` 端点 | 否 | 纯新增功能，不点不影响任何旧逻辑 |
+| 内置 Playwright 自动抓包 | 否 | 纯新增功能，不影响已有模板 |
+| Cookie 获取页面 `/get_cookies` | 否 | 纯新增功能 |
+| `worker.push_batch` N+1 重构 | 否 | 只优化查询次数，推送内容、判定逻辑、调度规则一字未改 |
+| `worker.clear_log` 改批量删除 | 否 | 一次性删过期日志 vs 逐条删，结果一致 |
+| `db.tasklog/task/tpl.list` kwargs 支持 list | 否 | 完全向后兼容：标量走 `=`，list 才走 `IN` |
+| `run.py` 缩进修复 + 默认密钥告警 | 否 | 只影响启动流程，不碰任务执行 |
+| 中文教程 | 否 | 纯文档 |
 
 **核心未改文件**（任务执行关键路径）：
 
@@ -266,7 +288,7 @@ environment:
 
 数据库与 `./config` 目录在升级时原地保留，容器重建不丢数据，老任务下次到点继续按原 HAR 重放。
 
-### ⚠️ 关于密钥的特别提醒
+### 关于密钥的特别提醒
 
 升级到本 fork 后，启动日志可能出现：
 
@@ -376,11 +398,25 @@ FROM qdtoday/qd:lite-latest
 
 精简版去掉了 ddddocr / opencv 等依赖，镜像体积小一半，但不能用 OCR 验证码识别功能。
 
+### Q7：Playwright 自动抓包报错 / Chromium 崩溃
+
+1. 确保 `docker-compose.yml` 中设置了 `shm_size: 1gb`（Chromium 需要较大共享内存）
+2. 检查日志：`docker compose logs qd | grep -i playwright`
+3. 如果内存不足，减少 `PLAYWRIGHT_MAX_CONCURRENT` 为 1
+
+### Q8：AI 功能不工作
+
+1. 检查 `AI_API_KEY` 是否正确设置
+2. 测试 API 连通性：`curl http://your-qd-host:8923/har/ai_status`
+3. 检查日志中的 AI 调用错误信息
+4. 尝试更换 `AI_BASE_URL` 和 `AI_MODEL`
+
 ---
 
 ## 七、相关文档
 
 - [HAR 抓包教程](./har-capture.md)
 - [AI 智能识别签到模板](./ai-sign-template.md)
+- [URL 自动抓包](./auto-capture.md)
 - [使用指南](./how-to-use.md)
 - [常见问题](./faq.md)

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Get-Cookies 扩展设置</title>
+<style>
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+    min-width: 320px;
+    color: #333;
+}
+h3 {
+    font-size: 16px;
+    margin: 0 0 12px 0;
+    color: #111;
+}
+p {
+    font-size: 13px;
+    color: #666;
+    margin: 0 0 8px 0;
+    line-height: 1.5;
+}
+textarea {
+    width: 100%;
+    height: 100px;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 13px;
+    resize: vertical;
+    box-sizing: border-box;
+}
+textarea:focus {
+    outline: none;
+    border-color: #10b981;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+.btn-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+#save {
+    background: #10b981;
+    color: white;
+}
+#save:hover {
+    background: #059669;
+}
+#reset {
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #ddd;
+}
+#reset:hover {
+    background: #e5e7eb;
+}
+#status {
+    font-size: 13px;
+    color: #10b981;
+    margin-left: 8px;
+    line-height: 36px;
+}
+.hint {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 12px;
+    font-size: 12px;
+    color: #166534;
+}
+</style>
+</head>
+<body>
+
+<h3>QD 框架地址</h3>
+<p>填入 QD 框架的访问地址（一行一个），扩展会在这些网站上启用 Cookie 获取功能。</p>
+<textarea id="tgurl" placeholder="例如：192.168.0.111:8923&#10;或 qd.yourdomain.com"></textarea>
+
+<div class="btn-row">
+    <button id="save">保存</button>
+    <button id="reset">重置</button>
+    <span id="status"></span>
+</div>
+
+<div class="hint">
+    <strong>提示：</strong>填入 QD 框架的 IP 或域名（含端口），扩展会在匹配的页面上注入 Cookie 获取按钮。
+    <br>例如：<code>192.168.0.111:8923</code> 或 <code>qd.example.com</code>
+</div>
+
+<script src="options.js"></script>
+</body>
+</html>

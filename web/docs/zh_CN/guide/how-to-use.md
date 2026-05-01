@@ -55,6 +55,30 @@ HAR：<https://toolbox.googleapps.com/apps/har_analyzer/?lang=zh_CN>
 4. 根据需要修改模板。
 5. 然后跳到 [3.编辑模板](#编辑模板) 继续编辑。
 
+### 4. AI 智能识别（推荐）
+
+如果你已经有一份 HAR 文件，可以使用 AI 自动识别签到接口：
+
+1. 上传 HAR 文件到编辑器。
+2. 点击右上角 **「AI 智能识别签到」** 按钮。
+3. 填写提示词（可选），如「每日签到」「积分领取」。
+4. 点 **开始分析**，等待 5-30 秒。
+5. AI 会自动识别签到接口，处理重复签到，生成日志输出。
+6. 检查结果后点 **应用到当前模板**。
+
+详见 [AI 自动生成签到模板](./ai-sign-template.md)。
+
+### 5. URL 自动抓包（最简单）
+
+不想自己抓包？QD 可以自动完成：
+
+1. 在 HAR 编辑器中点右上角 **「URL 自动抓包」**。
+2. 填写签到页面 URL 和 Cookie。
+3. 点 **开始抓包**，QD 自动用 Playwright 加载页面、找签到按钮、录制 HAR。
+4. 可选：勾选「自动调用 AI 分析」，一步到位生成模板。
+
+详见 [URL 自动抓包](./auto-capture.md)。
+
 ## 上传 HAR 文件
 
 1. 访问并登录 QD 首页。
@@ -84,3 +108,13 @@ HAR：<https://toolbox.googleapps.com/apps/har_analyzer/?lang=zh_CN>
 3. 填写任务变量，任务间隔、任务组和任务执行时间。
 4. 单击 `测试` 按钮测试任务。
 5. 单击保存按钮保存任务。
+
+## 获取 Cookie
+
+QD 提供了多种方式获取 Cookie：
+
+1. **浏览器 DevTools**：F12 → Application → Cookies，手动复制。
+2. **QD 内置页面**：访问 `/get_cookies/page`，输入网址后自动提取。
+3. **浏览器扩展**：安装 [QD get-cookies 扩展](https://github.com/qd-today/get-cookies)，一键复制。
+
+详见 [URL 自动抓包 - Cookie 获取方式](./auto-capture.md#五cookie-获取方式)。
