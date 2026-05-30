@@ -1,6 +1,7 @@
-# Playwright sidecar 镜像
-# 提供「URL → 自动抓 HAR」能力, 由 QD 主容器通过 HTTP 调用。
-# 用法见 docker-compose.local.yml 中的 playwright 服务定义。
+# Playwright sidecar 镜像（已废弃 / DEPRECATED）
+# 「URL 自动抓包」现已集成进 QD 主镜像（进程内置 Playwright, 见 libs/playwright_capture.py）,
+# 本 sidecar 已从 docker-compose 移除、不再随主镜像构建, 仅作历史保留。
+# 如确需独立容器运行, 可手动 `docker build` 本目录（其 requirements.txt 已含 uvicorn/fastapi）。
 
 FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
 

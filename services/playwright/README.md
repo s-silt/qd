@@ -1,4 +1,6 @@
-# Playwright sidecar
+# Playwright sidecar（已废弃 / DEPRECATED）
+
+> ⚠️ **本 sidecar 已废弃,无需部署。** `URL 自动抓包` 现已集成进 QD 主镜像（进程内置 Playwright，主 `Dockerfile` 已内置 playwright + chromium），不再需要独立 sidecar，也不再接入 `docker-compose`。详见 [`auto-capture.md`](../../web/docs/zh_CN/guide/auto-capture.md)。本目录仅作历史保留。
 
 QD `URL 自动抓包` 功能的独立服务容器。给定 URL + Cookie/storage_state, 启动 headless Chromium 加载页面、点击签到按钮、录制 HAR 返回给 QD 主端。
 
