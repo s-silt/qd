@@ -48,7 +48,9 @@ class TaskMultiOperateHandler(BaseHandler):
 
     @authenticated
     async def post(self, userid):
-        # user = self.current_user
+        # 强制 userid 为当前登录用户 (管理员除外), 配合下方 task['userid']==int(userid)
+        # 校验, 防止越权操作他人任务 (IDOR)
+        userid = self.check_self_or_admin(userid)
         try:
             envs = {}
             for key in self.request.body_arguments:
@@ -137,6 +139,7 @@ class TaskMultiOperateHandler(BaseHandler):
 class GetTasksInfoHandler(BaseHandler):
     @authenticated
     async def post(self, userid):
+        userid = self.check_self_or_admin(userid)
         try:
             envs = {}
             for key in self.request.body_arguments:
@@ -147,8 +150,9 @@ class GetTasksInfoHandler(BaseHandler):
                 if isinstance(selected[0], bytes):
                     selected[0] = selected[0].decode()
                 if selected[0] == 'true':
-                    task = await self.db.task.get(taskid, fields=('id', 'note', 'tplid'))
-                    if task:
+                    task = await self.db.task.get(taskid, fields=('id', 'note', 'tplid', 'userid'))
+                    # 仅返回归属当前用户的任务, 防止越权读取他人任务信息 (IDOR)
+                    if task and task['userid'] == userid:
                         sitename = (await self.db.tpl.get(task['tplid'], fields=('sitename',)))['sitename']
                         task['sitename'] = sitename
                         tasks.append(task)
