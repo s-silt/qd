@@ -160,8 +160,10 @@ services:
   qd:
     # ... 已有内容 ...
     depends_on:
-      - redis
-      - mysql
+      redis:
+        condition: service_started
+      mysql:
+        condition: service_healthy  # 等 MySQL 健康检查通过(而非仅"已启动")再拉起 qd
     environment:
       - DB_TYPE=mysql
       - JAWSDB_MARIA_URL=mysql://qd:your-mysql-password@mysql:3306/qd?auth_plugin=mysql_native_password
@@ -182,9 +184,16 @@ services:
       - --default-authentication-plugin=mysql_native_password
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uqd", "-pyour-mysql-password"]
+      interval: 5s
+      timeout: 5s
+      retries: 20  # MySQL 首次初始化较慢, 给足就绪时间
 ```
 
-> 第一次启动 MySQL 后，QD 需要等 MySQL 完全就绪才能连接。如果 qd 容器先起来报连接错误，等 30 秒后 `docker compose restart qd`。
+> QD 启动时会**自动等待并重试连接数据库**(默认最多重试 10 次、间隔递增, 约覆盖 2~3 分钟), 因此 MySQL 首次初始化较慢时 qd 会自动等其就绪后再连接, **不再需要手动 `docker compose restart qd`**。
+>
+> 如需调整重试行为, 可设环境变量 `DB_CONNECT_MAX_RETRY`(默认 `10`, 设为负数表示一直等到数据库就绪)与 `DB_CONNECT_RETRY_INTERVAL`(默认 `3.0` 秒, 实际等待按尝试次数线性递增, 上限 30s)。配合上面的 `healthcheck` + `depends_on: condition: service_healthy` 效果最佳。
 
 ### 启用 AI 辅助签到模板生成
 
@@ -372,9 +381,11 @@ git push origin master
 `docker compose -f docker-compose.local.yml ps` 看 qd 是否 `Up`。
 端口被占用就改 `8923:80` 左侧那个 8923 为别的端口。
 
-### Q3：日志里一直报 `redis connection refused`
+### Q3：日志里报 `redis connection refused`
 
-redis 容器没就绪就启动了 qd。`docker compose restart qd` 即可。
+redis 容器还没就绪时 qd 就启动了。**Redis 连接失败不会导致 qd 崩溃**(只是告警, 影响限流/队列等功能), redis 起来后 qd 会自动重连, 通常无需处理。若持续报错, 检查 `REDISCLOUD_URL` 与 redis 服务状态。
+
+> 数据库(MySQL/SQLite)连接失败则不同——但 qd 启动时已会自动重试等待数据库就绪(见上文「使用 MySQL 替代 SQLite」), 同样不需要手动重启。
 
 ### Q4：怎么删除所有数据从头开始
 
