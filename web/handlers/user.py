@@ -216,6 +216,7 @@ class UserRegPush(BaseHandler):
 class UserRegPushSw(BaseHandler):
     @authenticated
     async def get(self, userid):
+        userid = self.check_self_or_admin(userid)
         tasks = []
         for task in await self.db.task.list(userid, fields=('id', 'tplid', 'note', 'disabled', 'ctime', 'pushsw'), limit=None):
             tpl = await self.db.tpl.get(task['tplid'], fields=('id', 'userid', 'sitename', 'siteurl', 'banner', 'note'))
@@ -253,6 +254,7 @@ class UserRegPushSw(BaseHandler):
 
     @authenticated
     async def post(self, userid):
+        userid = self.check_self_or_admin(userid)
         try:
             async with self.db.transaction() as sql_session:
                 tasks = []
@@ -703,6 +705,7 @@ class CustomPusherHandler(BaseHandler):
 class UserSetNewPWDHandler(BaseHandler):
     @authenticated
     async def get(self, userid):
+        userid = self.check_self_or_admin(userid)
         email = (await self.db.user.get(userid, fields=('email',)))['email']
         await self.render('user_setnewpwd.html', userid=userid, usermail=email)
         return
