@@ -1,8 +1,12 @@
 # Docker 部署教程（s-silt/qd fork）
 
-> 本教程介绍如何使用 [s-silt/qd](https://github.com/s-silt/qd) 这个 fork 仓库部署 QD 框架。fork 包含 **AI 智能识别签到**、**内置 Playwright 自动抓包**、worker N+1 优化等新增功能。
+> 本教程介绍如何使用 [s-silt/qd](https://github.com/s-silt/qd) 这个 fork 仓库部署 QD 框架。fork 包含 **AI 智能识别签到**、**内置 Playwright 自动抓包**、**验证码 OCR**、worker N+1 优化等新增功能。
 >
-> 官方 Dockerfile（`Dockerfile`）会在构建时从 `gitee.com:qd-today/qd` 拉取上游代码，**不会包含 fork 的修改**。所以本教程使用专为 fork 准备的 `Dockerfile.local` 与 `docker-compose.local.yml`，直接基于本地源码构建。
+> 拿到 fork 镜像有两种方式：
+> - **方式 A（推荐，免构建）**：直接用 CI 自动发布的预构建镜像 [`ghcr.io/s-silt/qd:latest`](https://github.com/s-silt/qd/pkgs/container/qd)。每次推送到 `master` 都会自动重新构建发布，含 fork 全部修改、Playwright + Chromium、OCR（amd64 / arm64）。
+> - **方式 B（本地构建）**：用 `docker-compose.local.yml` 基于本地源码构建。主 `Dockerfile` 通过 `COPY` 打包当前目录源码，**会包含你的本地改动**。
+>
+> 注意：`Dockerfile.lite` / `Dockerfile.ja3` 会从 `gitee.com:qd-today/qd` 拉取**上游**代码、**不含 fork 修改**，请勿用它们部署本 fork。
 
 ## 目录
 
@@ -87,6 +91,23 @@ docker compose -f docker-compose.local.yml up -d --build
 
 首次构建大约 1-3 分钟（视网络），看到 `qd Started` 表示成功。
 
+**💡 免本地构建（方式 A，推荐）**：fork 已配置 CI，每次推送 `master` 会在 GitHub Actions 上自动构建并发布镜像到 `ghcr.io/s-silt/qd:latest`（amd64 / arm64）。把 `docker-compose.local.yml` 里 qd 服务的 `build:` 段替换为 `image:`，即可跳过本地构建：
+
+```yaml
+services:
+  qd:
+    image: ghcr.io/s-silt/qd:latest   # 取代原 build: 段；其余 environment / volumes / restart 不变
+```
+
+然后 `docker compose -f docker-compose.local.yml up -d`（无需 `--build`）启动；以后升级只要：
+
+```bash
+docker compose -f docker-compose.local.yml pull && docker compose -f docker-compose.local.yml up -d
+```
+
+> 若该 GHCR 包仍为 private，拉取前先 `docker login ghcr.io`（GitHub 用户名 + 一个具 `read:packages` 权限的 PAT）；或在仓库 Packages 设置里把它改为 public。
+> CI 工作流定义见 `.github/workflows/publish-ghcr-fork.yml`，可在仓库 **Actions** 页查看每次构建状态。
+
 ### 4. 访问
 
 打开浏览器访问 `http://你的服务器IP:8923` —— 第一个注册的账号会自动设为管理员。
@@ -136,6 +157,8 @@ docker run -d --name qd --restart unless-stopped \
 ```
 
 > 注意：`--shm-size=1gb` 是 Playwright Chromium 需要的共享内存，不设置可能导致浏览器崩溃。
+>
+> 也可以跳过第 2 步的本地构建，直接把第 4 步的 `s-silt/qd:local` 换成预构建镜像 `ghcr.io/s-silt/qd:latest`（先 `docker pull ghcr.io/s-silt/qd:latest`）。
 
 ---
 
