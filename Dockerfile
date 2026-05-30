@@ -28,6 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libxshmfence1 \
     libgtk-3-0 \
+    # OCR (ddddocr) 运行时库: opencv-python-headless / onnxruntime
+    libglib2.0-0 \
+    libgomp1 \
     # 其他依赖
     openssh-client \
     curl \
