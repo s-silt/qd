@@ -74,6 +74,10 @@
   其 GET 仅渲染管理表单(实际操作仍需管理员口令), 风险低。
 - 🟢 `util.py` Toolbox/Notepad 系列: 经 `check_permission` 或 `challenge_md5` 校验。
 - 🟢 `GetCookiesExtension` 打包目录为硬编码常量, 无路径穿越; `password_hash` 用 PBKDF2-SHA256。
+- 🟢 **`libs/funcs.py` `judge_res()` 后接 `res.json()` 的「aiohttp body 双读」为误报**:
+  `judge_res` 在 `status == 200` 时直接 `return "True"`(未读 body); `status != 200` 才读
+  `res.text()` 且**必定 `raise``, 后续 `res.json()` 不可达。故 224/253/335/396/431 等调用点的
+  `res.json()` 仅在 200 路径(body 未消费)执行, 安全。与 2026-04-29 review §3.2 结论一致, 不改。
 
 ### 🟡 可接受风险 (内网部署, 按用户指示降级, 非 P3 以上 / 改动会破坏功能)
 
