@@ -194,18 +194,26 @@ class TestAIResultToHar(unittest.TestCase):
                 }
             ],
         }
+        # ai_result_to_har 返回 QD 模板步骤列表 (旧 entries 格式会被转换)
         har = ai_result_to_har(result)
-        self.assertEqual(len(har["log"]["entries"]), 1)
-        e = har["log"]["entries"][0]
+        self.assertEqual(len(har), 1)
+        e = har[0]
         self.assertEqual(e["request"]["method"], "POST")
         self.assertEqual(e["request"]["url"], "https://api.demo.com/sign")
-        self.assertIn("postData", e["request"])
-        self.assertEqual(e["request"]["postData"]["text"], '{"action":"sign"}')
+        self.assertEqual(e["request"]["data"], '{"action":"sign"}')
+        self.assertEqual(e["request"]["mimeType"], "application/json")
+        self.assertEqual(e["comment"], "POST 路径含 sign")
 
     def test_empty_entries(self):
         from libs.ai_client import ai_result_to_har
         har = ai_result_to_har({"entries": []})
-        self.assertEqual(har["log"]["entries"], [])
+        self.assertEqual(har, [])
+
+    def test_new_format_passthrough(self):
+        # 新格式: AI 直接输出 result["har"] 模板数组, 原样返回
+        from libs.ai_client import ai_result_to_har
+        tpl = [{"request": {"method": "GET", "url": "https://x"}, "rule": {}}]
+        self.assertEqual(ai_result_to_har({"har": tpl}), tpl)
 
 
 class TestAIClientDisabled(unittest.TestCase):

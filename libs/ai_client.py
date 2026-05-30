@@ -564,8 +564,8 @@ def parse_ai_response(content: str) -> Dict[str, Any]:
     raise AIClientError(f"AI 输出不含 JSON 对象; 原文: {content[:300]}")
 
 
-def ai_result_to_har(result: Dict[str, Any]) -> Dict[str, Any]:
-    """把 AI 输出转成 QD 编辑器可加载的 HAR 结构。
+def ai_result_to_har(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """把 AI 输出转成 QD 编辑器可加载的模板步骤列表 (QD har 数组)。
 
     支持两种格式：
     1. 新格式：AI 直接输出 QD 模板数组在 result["har"] 中

@@ -264,11 +264,11 @@ class BaseWorker:
         pushsw = json.loads(task['pushsw'])
         async with self.db.transaction() as sql_session:
             user = await self.db.user.get(task['userid'], fields=('id', 'email', 'email_verified', 'nickname', 'logtime'), sql_session=sql_session)
-            userid = user['id']
             if not user:
                 await self.db.tasklog.add(task['id'], False, msg='no such user, disabled.', sql_session=sql_session)
                 await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
                 return False
+            userid = user['id']
 
             tpl = await self.db.tpl.get(task['tplid'], fields=('id', 'userid', 'sitename', 'siteurl', 'tpl', 'interval', 'last_success'), sql_session=sql_session)
             if not tpl:
@@ -439,7 +439,6 @@ class QueueWorker(BaseWorker):
     async def runner(self, id):
         logger_worker.debug('Runner %d started' , id)
         while True:
-            sleep = asyncio.sleep(config.check_task_loop / 1000.0)
             task = await self.queue.get()
             logger_worker.debug(
                 'Runner %d get task: %s, running...' , id, task['id'])
@@ -456,12 +455,14 @@ class QueueWorker(BaseWorker):
                 self.failed += 1
                 self.task_lock[task['id']] = False
             self.queue.task_done()
-            await sleep
+            # 限速放在循环末尾, 保证每次取任务之间至少间隔 check_task_loop
+            # (旧实现把 asyncio.sleep 在阻塞 queue.get 之前创建, 任务耗时超过间隔时
+            #  await 立即返回, 起不到限速作用)
+            await asyncio.sleep(config.check_task_loop / 1000.0)
 
     async def producer(self):
         logger_worker.debug('Schedule Producer started')
         while True:
-            sleep = asyncio.sleep(config.check_task_loop / 1000.0)
             try:
                 tasks = await self.db.task.scan()
                 unlock_tasks = 0
@@ -477,7 +478,7 @@ class QueueWorker(BaseWorker):
             except Exception as e:
                 logger_worker.error(
                     'Schedule Producer get tasks failed! %s', e, exc_info=config.traceback_print)
-            await sleep
+            await asyncio.sleep(config.check_task_loop / 1000.0)
 
 # 旧版本批量任务定时执行
 # 建议仅当新版 Queue 生产者消费者定时执行功能失效时使用

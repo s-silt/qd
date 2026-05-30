@@ -120,7 +120,9 @@ class AlchemyMixin:
 
     async def _insert_or_update(self, insert_stmt: Insert, sql_session: Optional[AsyncSession] = None, **kwargs) -> int:
         async with self.transaction(sql_session) as sql_session:
-            insert_stmt.on_duplicate_key_update(**kwargs)
+            # on_duplicate_key_update() 返回新的语句对象, 不会原地修改 insert_stmt,
+            # 必须用返回值执行, 否则 ON DUPLICATE KEY UPDATE 子句会被丢弃, 退化为普通 INSERT
+            insert_stmt = insert_stmt.on_duplicate_key_update(**kwargs)
             result: Result = await sql_session.execute(insert_stmt)
             return result.lastrowid if hasattr(result, 'lastrowid') else -1
 

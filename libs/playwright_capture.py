@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from libs.button_finder import JS_FIND_CANDIDATES, pick_button
 from libs.security import (
     parse_cookie_str_to_storage_state,
+    resolve_blocked_reason,
     sanitize_storage_state,
 )
 
@@ -125,10 +126,15 @@ def validate_url(url: str) -> str:
         raise ValueError("URL 必须是 http(s)://")
     if not u.hostname:
         raise ValueError("URL 缺少 hostname")
+    host = u.hostname.lower()
     if PLAYWRIGHT_ALLOW_HOSTS:
-        host = u.hostname.lower()
         if not any(host == h or host.endswith("." + h) for h in PLAYWRIGHT_ALLOW_HOSTS):
             raise ValueError(f"hostname 不在 PLAYWRIGHT_ALLOW_HOSTS 白名单内: {host}")
+    else:
+        # 未配置白名单时, 仍拦截环回 / 链路本地(云元数据) / 多播等内部地址防 SSRF
+        reason = resolve_blocked_reason(host)
+        if reason:
+            raise ValueError(f"目标地址被 SSRF 防护拦截: {reason}")
     return url
 
 
