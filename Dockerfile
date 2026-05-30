@@ -38,10 +38,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 
 # 安装 Python 依赖
+# Playwright 浏览器仅提供 amd64/arm64 预编译包; requirements.txt 已用 platform_machine
+# 标记在其余架构(386/armv6/armv7)跳过安装 playwright。故此处据"是否真的装上了
+# playwright"决定要不要下载 chromium, 避免在无浏览器的架构上 install 失败导致多架构构建中断。
 RUN pip install --no-cache-dir -r requirements.txt && \
-    # 安装 Playwright 浏览器
-    playwright install chromium && \
-    playwright install-deps chromium
+    if python -c "import playwright" 2>/dev/null; then \
+        playwright install chromium && playwright install-deps chromium; \
+    else \
+        echo "[build] 当前架构无 playwright 预编译包, 跳过 chromium 安装 (URL 自动抓包功能在该架构不可用)"; \
+    fi
 
 # 复制项目文件
 COPY . .
