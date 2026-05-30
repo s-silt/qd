@@ -123,6 +123,31 @@ class BaseHandler(_BaseHandler):
             raise HTTPError(401)
         return obj
 
+    def check_self_or_admin(self, userid):
+        """确认 URL 中的 userid 属于当前登录用户 (管理员除外)。
+
+        防止水平越权 (IDOR): 形如 /user/<userid>/... 的接口若直接信任 URL 中的
+        userid 去读写账户数据, 任意已登录用户都能操作他人账户。统一在此校验,
+        并返回应当使用的 userid (普通用户强制为自身 id)。
+        """
+        user = self.current_user
+        if not user:
+            self.evil(+1)
+            raise HTTPError(403)
+        if user.get('isadmin'):
+            try:
+                return int(userid)
+            except (TypeError, ValueError):
+                return userid
+        try:
+            same = userid is not None and int(userid) == int(user['id'])
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            self.evil(+5)
+            raise HTTPError(403)
+        return user['id']
+
 
 class BaseWebSocketHandler(_BaseHandler, tornado.websocket.WebSocketHandler):
     def prepare(self):

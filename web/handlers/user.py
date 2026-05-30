@@ -44,10 +44,12 @@ def tostr(s):
 class UserRegPush(BaseHandler):
     @authenticated
     async def get(self, userid):
+        userid = self.check_self_or_admin(userid)
         await self.render('user_register_pusher.html', userid=userid)
 
     @authenticated
     async def post(self, userid):
+        userid = self.check_self_or_admin(userid)
         envs = {}
         for key in self.request.body_arguments:
             envs[key] = self.get_body_arguments(key)
@@ -661,6 +663,7 @@ class UserPushShowPvar(BaseHandler):
 class CustomPusherHandler(BaseHandler):
     @authenticated
     async def get(self, userid):
+        userid = self.check_self_or_admin(userid)
         diypusher = (await self.db.user.get(userid, fields=('diypusher',)))['diypusher']
         diypusher = json.loads(diypusher) if (diypusher != '') else {'mode': 'GET'}
         await self.render('user_register_cus_pusher.html', userid=userid, diypusher=diypusher)
@@ -668,6 +671,7 @@ class CustomPusherHandler(BaseHandler):
 
     @authenticated
     async def post(self, userid):
+        userid = self.check_self_or_admin(userid)
         try:
             envs = {}
             for k, _ in self.request.body_arguments.items():

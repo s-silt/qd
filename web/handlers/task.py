@@ -768,6 +768,8 @@ class TaskGroupHandler(BaseHandler):
     @authenticated
     async def get(self, taskid):
         user = self.current_user
+        # 校验任务归属当前用户, 防止越权读取他人任务分组 (IDOR)
+        self.check_permission(await self.db.task.get(taskid, fields=("id", "userid")), "r")
         group_now = (await self.db.task.get(taskid, fields=("_groups",)))["_groups"]
         _groups = []
         for task in await self.db.task.list(
@@ -802,6 +804,8 @@ class TaskGroupHandler(BaseHandler):
                 else:
                     target_group = "None"
 
+        # 校验任务归属当前用户, 防止越权修改他人任务分组 (IDOR)
+        self.check_permission(await self.db.task.get(taskid, fields=("id", "userid")), "w")
         await self.db.task.mod(taskid, _groups=target_group)
 
         self.redirect("/my/")

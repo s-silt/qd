@@ -174,6 +174,8 @@ class TPLGroupHandler(BaseHandler):
     @authenticated
     async def get(self, tplid):
         user = self.current_user
+        # 校验模板归属当前用户 (公开模板允许只读), 防止越权读取他人模板分组 (IDOR)
+        self.check_permission(await self.db.tpl.get(tplid, fields=('id', 'userid')), 'r')
         group_now = (await self.db.tpl.get(tplid, fields=('_groups',)))['_groups']
         # tasks = []
         _groups = []
@@ -202,6 +204,8 @@ class TPLGroupHandler(BaseHandler):
                     break
                 target_group = 'None'
 
+        # 校验模板归属当前用户, 防止越权修改他人模板分组 (IDOR)
+        self.check_permission(await self.db.tpl.get(tplid, fields=('id', 'userid')), 'w')
         await self.db.tpl.mod(tplid, _groups=target_group)
 
         self.redirect('/my/')
