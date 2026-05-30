@@ -1,0 +1,75 @@
+name: Publish Fork Image to GHCR
+
+# 本 fork (s-silt/qd) 专用镜像发布工作流。
+#
+# 背景: 上游的 Publish*.yml 都用 `if: startsWith(github.repository, 'qd-today/qd')`
+# 锁定为只在上游仓库运行, 因此在 fork 上合并代码【不会】自动产出任何镜像。本工作流补上
+# 这一环: 在 fork 上构建主 Dockerfile 并推送到 ghcr.io/<owner>/qd。
+#
+# 凭据: 使用 GitHub Actions 内置的 GITHUB_TOKEN 推送到本仓库所属的 GHCR, 无需配置任何额外密钥。
+# 首次推送后, 该 package 默认是 private; 如需公开拉取, 到仓库 Packages 设置里改为 public。
+
+on:
+  push:
+    branches: [master]
+    tags: ["*"]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'web/docs/**'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    # 仅在本 fork 运行, 避免被上游或其它 fork 误触发
+    if: github.repository == 's-silt/qd'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 腾讯镜像对海外 GitHub runner 会返回 403, 故 CI 构建临时改用 pypi.org 官方源。
+      # 仅修改 runner 上的工作副本, 不影响仓库内 requirements.txt(本地国内构建仍走腾讯镜像)。
+      - name: Use official PyPI index for CI build
+        run: |
+          sed -i -E '/^[[:space:]]*(-i|--index-url|--extra-index-url)([[:space:]]|=)/d' requirements.txt
+          sed -i '1i --index-url https://pypi.org/simple' requirements.txt
+          echo "---- requirements.txt (head) ----"
+          head -5 requirements.txt
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # Playwright/onnxruntime 仅 amd64/arm64 有预编译包; 其余架构由 requirements.txt 的
+          # platform_machine 标记自动跳过, 故这里只构建这两种架构(arm64 为 QEMU 模拟, 较慢)。
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
