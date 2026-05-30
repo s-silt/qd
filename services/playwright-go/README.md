@@ -1,4 +1,6 @@
-# QD Playwright-Go Sidecar
+# QD Playwright-Go Sidecar（已废弃 / DEPRECATED）
+
+> ⚠️ **已废弃,无需部署。** `URL 自动抓包` 现已集成进 QD 主镜像（进程内置 Playwright），不再需要任何 sidecar，本目录仅作历史保留。
 
 Lightweight Go replacement for `services/playwright` (Python/Playwright).
 Both services coexist; this one is the opt-in alternative when image size and
