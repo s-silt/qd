@@ -9,6 +9,7 @@ services:
     volumes:
       - "./config:/usr/src/app/config"
     shm_size: 1gb  # Playwright 需要共享内存
+    restart: unless-stopped  # DB/Redis 未就绪等异常时自动重启, 避免容器一崩就永久退出
     environment:
       - DOMAIN=
       - COOKIE_SECRET=binux
@@ -29,6 +30,7 @@ services:
   redis:
     image: redis:alpine
     container_name: redis
-    command: ["--loglevel warning"]
+    command: ["--loglevel", "warning"]
+    restart: unless-stopped
     volumes:
       - ./redis/data:/data:rw

@@ -92,6 +92,17 @@ class sqlite3:
     )  # Sqlite3数据库文件地址
 
 
+# 数据库启动连接重试设置
+# Docker / Compose 部署时, 数据库容器(尤其 MySQL 首次初始化)可能晚于 QD 就绪,
+# 启动时带退避重试可避免容器"构建成功但一启动就退出"。
+db_connect_max_retry = int(
+    os.getenv("DB_CONNECT_MAX_RETRY", "10")
+)  # 启动时连接数据库的最大重试次数, 设为负数表示无限重试(一直等到数据库就绪)
+db_connect_retry_interval = float(
+    os.getenv("DB_CONNECT_RETRY_INTERVAL", "3.0")
+)  # 连接失败后的基础重试间隔(秒), 实际等待时间按尝试次数线性递增, 上限 30s
+
+
 class sqlalchemy:
     ## SQLAlchmey配置
     logging_name = os.getenv("QD_SQL_LOGGING_NAME", "QD.sql")  # SQLAlchmey 日志名称
