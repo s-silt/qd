@@ -64,9 +64,10 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          # Playwright/onnxruntime 仅 amd64/arm64 有预编译包; 其余架构由 requirements.txt 的
-          # platform_machine 标记自动跳过, 故这里只构建这两种架构(arm64 为 QEMU 模拟, 较慢)。
-          platforms: linux/amd64,linux/arm64
+          # Playwright/onnxruntime 仅 amd64/arm64 有预编译包(其余架构由 requirements.txt 的
+          # platform_machine 标记自动跳过)。先只构建 amd64 以保证首次构建快速稳定;
+          # 确认 amd64 镜像可用后, 可改回 linux/amd64,linux/arm64 再加上 arm64(QEMU 模拟, 较慢)。
+          platforms: linux/amd64
           push: true
           tags: |
             ghcr.io/${{ github.repository }}:latest
