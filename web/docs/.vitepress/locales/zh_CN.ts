@@ -68,6 +68,7 @@ function sidebarGuide() {
         { text: "URL 自动抓包", link: "/zh_CN/guide/auto-capture" },
         { text: "NodeSeek 每日签到", link: "/zh_CN/guide/nodeseek-checkin" },
         { text: "恩山论坛每日签到", link: "/zh_CN/guide/right-enshan-checkin" },
+        { text: "LinkAI 每日签到", link: "/zh_CN/guide/linkai-checkin" },
         { text: "更新", link: "/zh_CN/guide/update" },
         { text: "常见问题", link: "/zh_CN/guide/faq" },
       ],
