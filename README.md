@@ -71,6 +71,10 @@ QD [v20260429] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 3. **[AI 自动生成签到模板](./web/docs/zh_CN/guide/ai-sign-template.md)** —— 把抓到的 HAR 一键交给 AI（DeepSeek / OpenAI / 通义 / 本地 Ollama）自动识别签到接口，生成 QD 模板
 4. **[URL 自动抓包](./web/docs/zh_CN/guide/auto-capture.md)** —— 给 URL + Cookie，QD 自动用 Playwright 加载页面、找签到按钮、录制 HAR 并交给 AI 生成模板，一气呵成
 
+开箱即用示例：
+
+- **[NodeSeek 每日自动签到](./web/docs/zh_CN/guide/nodeseek-checkin.md)** —— 提供现成模板 [`templates/nodeseek-signin.json`](./templates/nodeseek-signin.json)，配置 Cookie 即可每天自动签到领鸡腿（含 Cloudflare 处理说明）。更多开箱即用模板见 [`templates/`](./templates/)。
+
 > 上游官方使用指南：<https://qd-today.github.io/qd/zh_CN/>
 > 历史变更详见 **[CHANGELOG.md](./CHANGELOG.md)**
 
