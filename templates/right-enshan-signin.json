@@ -1,0 +1,59 @@
+[
+  {
+    "comment": "第1步：打开恩山签到页(erling_qd 插件)，提取 formhash(CSRF)。需要变量 cookie(登录后的完整 Cookie，含 WAF 加速乐 clearance)。",
+    "request": {
+      "method": "GET",
+      "url": "https://www.right.com.cn/forum/erling_qd-sign_in.html",
+      "headers": [
+        {"name": "User-Agent", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+        {"name": "Accept", "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"},
+        {"name": "Accept-Language", "value": "zh-CN,zh;q=0.9"},
+        {"name": "Referer", "value": "https://www.right.com.cn/forum/forum.php"},
+        {"name": "Cookie", "value": "{{cookie}}"}
+      ],
+      "cookies": []
+    },
+    "rule": {
+      "success_asserts": [
+        {"re": "name=\"formhash\"\\s+value=\"[0-9a-fA-F]+\"|action=logout(?:&amp;|&)formhash=", "from": "content"}
+      ],
+      "failed_asserts": [
+        {"re": "您需要先登录|请先登录|未登录|action=login|加速乐|jsl_clearance|安全验证|请开启JavaScript", "from": "content"}
+      ],
+      "extract_variables": [
+        {"name": "formhash", "re": "name=\"formhash\"\\s+value=\"([0-9a-fA-F]+)\"", "from": "content"}
+      ]
+    }
+  },
+  {
+    "comment": "第2步：提交签到。data 里带上第1步抽取的 formhash。",
+    "request": {
+      "method": "POST",
+      "url": "https://www.right.com.cn/forum/plugin.php?id=erling_qd:action&action=sign",
+      "headers": [
+        {"name": "User-Agent", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+        {"name": "Accept", "value": "application/json, text/javascript, */*; q=0.01"},
+        {"name": "Accept-Language", "value": "zh-CN,zh;q=0.9"},
+        {"name": "Content-Type", "value": "application/x-www-form-urlencoded; charset=UTF-8"},
+        {"name": "X-Requested-With", "value": "XMLHttpRequest"},
+        {"name": "Origin", "value": "https://www.right.com.cn"},
+        {"name": "Referer", "value": "https://www.right.com.cn/forum/erling_qd-sign_in.html"},
+        {"name": "Cookie", "value": "{{cookie}}"}
+      ],
+      "cookies": [],
+      "data": "formhash={{formhash}}",
+      "mimeType": "application/x-www-form-urlencoded; charset=UTF-8"
+    },
+    "rule": {
+      "success_asserts": [
+        {"re": "\"success\"\\s*:\\s*true|\"status\"\\s*:\\s*1|签到成功|已签到|已经签到|签到过|今天已|今日已", "from": "content"}
+      ],
+      "failed_asserts": [
+        {"re": "未登录|请先登录|来路不正确|令牌错误|表单令牌|非法请求|操作频繁|系统繁忙|加速乐|jsl_clearance|安全验证|<!DOCTYPE html|<html", "from": "content"}
+      ],
+      "extract_variables": [
+        {"name": "__log__", "re": "\"message\"\\s*:\\s*\"(.*?)\"", "from": "content"}
+      ]
+    }
+  }
+]
