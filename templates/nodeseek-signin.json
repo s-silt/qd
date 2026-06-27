@@ -1,0 +1,31 @@
+[
+  {
+    "comment": "NodeSeek 每日签到。?random=true 随机鸡腿(1-10个), 改成 false 则固定 5 个。需要变量 cookie(浏览器登录后的完整 Cookie)。",
+    "request": {
+      "method": "POST",
+      "url": "https://www.nodeseek.com/api/attendance?random=true",
+      "headers": [
+        {"name": "User-Agent", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"},
+        {"name": "Accept", "value": "*/*"},
+        {"name": "Accept-Language", "value": "zh-CN,zh;q=0.9,en;q=0.8"},
+        {"name": "Origin", "value": "https://www.nodeseek.com"},
+        {"name": "Referer", "value": "https://www.nodeseek.com/board"},
+        {"name": "Cookie", "value": "{{cookie}}"}
+      ],
+      "cookies": []
+    },
+    "rule": {
+      "success_asserts": [
+        {"re": "\"success\"\\s*:\\s*true|已完成签到|重复操作", "from": "content"}
+      ],
+      "failed_asserts": [
+        {"re": "USER NOT FOUND|未登录|请先登录|无法验证|登录已过期|Just a moment|Attention Required|cf-browser-verification|<!DOCTYPE html", "from": "content"}
+      ],
+      "extract_variables": [
+        {"name": "ns_gain", "re": "\"gain\"\\s*:\\s*(\\d+)", "from": "content"},
+        {"name": "ns_current", "re": "\"current\"\\s*:\\s*(\\d+)", "from": "content"},
+        {"name": "__log__", "re": "\"message\"\\s*:\\s*\"(.*?)\"", "from": "content"}
+      ]
+    }
+  }
+]

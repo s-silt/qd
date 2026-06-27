@@ -61,7 +61,12 @@ function sidebarGuide() {
       items: [
         { text: "什么是 QD?", link: "/zh_CN/guide/what-is-qd" },
         { text: "部署", link: "/zh_CN/guide/deployment" },
+        { text: "Docker 部署教程", link: "/zh_CN/guide/docker-deploy" },
         { text: "如何使用?", link: "/zh_CN/guide/how-to-use" },
+        { text: "HAR 抓包教程", link: "/zh_CN/guide/har-capture" },
+        { text: "AI 自动生成签到模板", link: "/zh_CN/guide/ai-sign-template" },
+        { text: "URL 自动抓包", link: "/zh_CN/guide/auto-capture" },
+        { text: "NodeSeek 每日签到", link: "/zh_CN/guide/nodeseek-checkin" },
         { text: "更新", link: "/zh_CN/guide/update" },
         { text: "常见问题", link: "/zh_CN/guide/faq" },
       ],
