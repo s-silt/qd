@@ -75,6 +75,7 @@ QD [v20260429] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 
 - **[NodeSeek 每日自动签到](./web/docs/zh_CN/guide/nodeseek-checkin.md)** —— 现成模板 [`templates/nodeseek-signin.json`](./templates/nodeseek-signin.json)，配置 Cookie 即可每天自动签到领鸡腿（含 Cloudflare 处理说明）。
 - **[恩山论坛每日自动签到](./web/docs/zh_CN/guide/right-enshan-checkin.md)** —— 现成模板 [`templates/right-enshan-signin.json`](./templates/right-enshan-signin.json)，Discuz 两步签到（取 formhash → 签到，含加速乐 WAF 处理说明）。
+- **[LinkAI 每日自动签到](./web/docs/zh_CN/guide/linkai-checkin.md)** —— 现成模板 [`templates/linkai-signin.json`](./templates/linkai-signin.json)，两步签到（账号密码登录取 token → 签到领积分）。
 
 更多开箱即用模板见 [`templates/`](./templates/)。
 
