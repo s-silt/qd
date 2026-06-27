@@ -15,5 +15,6 @@
 | 文件 | 站点 | 说明 | 文档 |
 | --- | --- | --- | --- |
 | [`nodeseek-signin.json`](./nodeseek-signin.json) | [NodeSeek](https://www.nodeseek.com) | 每日签到领鸡腿（`random=true` 随机 / `false` 固定 5 个） | [NodeSeek 每日自动签到](../web/docs/zh_CN/guide/nodeseek-checkin.md) |
+| [`right-enshan-signin.json`](./right-enshan-signin.json) | [恩山无线论坛](https://www.right.com.cn/forum/) | 每日签到领恩山币（Discuz 两步签到：取 formhash → 签到） | [恩山论坛每日自动签到](../web/docs/zh_CN/guide/right-enshan-checkin.md) |
 
 > 需要的变量、Cloudflare 处理、定时设置等细节，请看每个模板对应的文档。

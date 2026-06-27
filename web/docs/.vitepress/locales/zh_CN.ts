@@ -67,6 +67,7 @@ function sidebarGuide() {
         { text: "AI 自动生成签到模板", link: "/zh_CN/guide/ai-sign-template" },
         { text: "URL 自动抓包", link: "/zh_CN/guide/auto-capture" },
         { text: "NodeSeek 每日签到", link: "/zh_CN/guide/nodeseek-checkin" },
+        { text: "恩山论坛每日签到", link: "/zh_CN/guide/right-enshan-checkin" },
         { text: "更新", link: "/zh_CN/guide/update" },
         { text: "常见问题", link: "/zh_CN/guide/faq" },
       ],
