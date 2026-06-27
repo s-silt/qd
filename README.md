@@ -73,7 +73,10 @@ QD [v20260429] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 
 开箱即用示例：
 
-- **[NodeSeek 每日自动签到](./web/docs/zh_CN/guide/nodeseek-checkin.md)** —— 提供现成模板 [`templates/nodeseek-signin.json`](./templates/nodeseek-signin.json)，配置 Cookie 即可每天自动签到领鸡腿（含 Cloudflare 处理说明）。更多开箱即用模板见 [`templates/`](./templates/)。
+- **[NodeSeek 每日自动签到](./web/docs/zh_CN/guide/nodeseek-checkin.md)** —— 现成模板 [`templates/nodeseek-signin.json`](./templates/nodeseek-signin.json)，配置 Cookie 即可每天自动签到领鸡腿（含 Cloudflare 处理说明）。
+- **[恩山论坛每日自动签到](./web/docs/zh_CN/guide/right-enshan-checkin.md)** —— 现成模板 [`templates/right-enshan-signin.json`](./templates/right-enshan-signin.json)，Discuz 两步签到（取 formhash → 签到，含加速乐 WAF 处理说明）。
+
+更多开箱即用模板见 [`templates/`](./templates/)。
 
 > 上游官方使用指南：<https://qd-today.github.io/qd/zh_CN/>
 > 历史变更详见 **[CHANGELOG.md](./CHANGELOG.md)**
