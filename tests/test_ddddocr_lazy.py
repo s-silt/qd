@@ -81,6 +81,9 @@ def util():
     # 每个用例前重置惰性缓存, 保证用例间互不影响
     mod._ddddocr_singleton = None
     mod._ddddocr_init_failed = False
+    # 这些用例验证的是「构建路径」, 假定 onnxruntime 本机可用; 直接放行子进程自检
+    # (#26), 避免在无 ddddocr 的 CI 上误把自检判失败而改变这些用例语义。
+    mod._ddddocr_probe_ok = True
     yield mod
 
 

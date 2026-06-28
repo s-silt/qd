@@ -320,10 +320,13 @@ notepad_limit = int(
 )  # 单个用户拥有记事本最大数量, 默认为 20
 
 # DdddOCR 设置
-# 是否启用验证码 OCR(ddddocr)。默认开启以保持原行为; 但在缺少 AVX/AVX2 指令集的
-# CPU 上, onnxruntime 加载模型会直接触发 SIGILL(Illegal instruction, core dumped)——
-# 这是原生崩溃, Python try/except 拦不住, 会让整个进程在启动时就死掉。若你的部署机是
-# 这种老 CPU(常见于低端 NAS / 老 VPS), 设 ENABLE_DDDDOCR=false 可彻底禁用 OCR, 服务正常运行。
+# 是否启用验证码 OCR(ddddocr)。默认【开启】以保持原行为, 不简单关掉本机可用的 OCR。
+# 在缺少 AVX/AVX2 指令集的 CPU 上, onnxruntime 加载模型会直接触发 SIGILL(Illegal
+# instruction, core dumped)——这是原生崩溃, Python try/except 拦不住。为此首次取用 OCR 时
+# 会用【子进程】探测 onnxruntime 能否真正加载/推理(见 web/handlers/util.py
+# _probe_onnxruntime_available): 子进程即便 SIGILL 也只杀子进程, 主进程据此【自动降级禁用】
+# 并告警。这样无 AVX 的老机自动关、可用机正常用, 无需人工干预。
+# 仍可显式设 ENABLE_DDDDOCR=false 完全跳过(连探测子进程都不起)。
 enable_ddddocr = bool(strtobool(os.getenv("ENABLE_DDDDOCR", "True")))
 extra_onnx_name = os.getenv("EXTRA_ONNX_NAME", "").split(
     "|"
