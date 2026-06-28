@@ -7,6 +7,7 @@
 import asyncio
 import datetime
 import json
+import re
 import time
 import traceback
 from typing import Dict, Optional
@@ -191,12 +192,40 @@ class BaseWorker:
             userid, push_batch=json.dumps(push_batch), sql_session=sql_session
         )
 
+    # 退避下限: 防止短 interval 模板被一次短暂宕机在几分钟内烧光重试 (#24)
+    MIN_BACKOFF = 60
+
+    @staticmethod
+    def _is_temporary_error(exc) -> bool:
+        """Heuristically decide whether *exc* is a transient (retry-able) error.
+
+        Network/timeout/connection failures and HTTP 5xx / 429 responses are
+        treated as temporary so a brief outage cannot permanently disable a
+        task (#24).  Anything else (wrong password, captcha, parse error, ...)
+        is considered permanent.
+        """
+        if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError)):
+            return True
+        msg = str(exc).lower()
+        keywords = (
+            'timeout', 'timed out', 'connection', 'reset by peer', 'temporarily',
+            'temporary', 'too many requests', 'bad gateway', 'service unavailable',
+            'gateway timeout', 'cannot connect', 'connect call failed', 'unreachable',
+        )
+        if any(k in msg for k in keywords):
+            return True
+        # HTTP 5xx / 429 status codes
+        if re.search(r'\b(429|5\d\d)\b', msg):
+            return True
+        return False
+
     @staticmethod
     def failed_count_to_time(
         last_failed_count: int,
         retry_count: int = config.task_max_retry_count,
         retry_interval: Optional[int] = None,
         interval: Optional[int] = None,
+        is_temporary: bool = False,
     ) -> Optional[int]:
         """Return seconds until the next retry, or None if no more retries.
 
@@ -205,12 +234,22 @@ class BaseWorker:
             retry_count: maximum allowed retries (-1 = unlimited).
             retry_interval: fixed retry interval in seconds (overrides back-off table).
             interval: tpl-level execution interval used to cap the next wait time.
+            is_temporary: when True the failure is transient (network/5xx); the
+                retry budget is treated as unlimited so a short outage cannot
+                permanently disable the task.  Explicit ``retry_count == 0``
+                (user disabled retries) is always honoured.
 
         Returns:
             Seconds to wait before next attempt, or None if the task should be disabled.
         """
+        # Temporary failures never exhaust the budget (unless the user disabled
+        # retries entirely with retry_count == 0).
+        effective_retry_count = retry_count
+        if is_temporary and retry_count != 0:
+            effective_retry_count = -1
+
         next = None
-        if last_failed_count < retry_count or retry_count == -1:
+        if last_failed_count < effective_retry_count or effective_retry_count == -1:
             if retry_interval:
                 next = retry_interval
             else:
@@ -222,17 +261,19 @@ class BaseWorker:
                     next = 4 * 60 * 60
                 elif last_failed_count == 3:
                     next = 6 * 60 * 60
-                elif last_failed_count < retry_count or retry_count == -1:
+                elif last_failed_count < effective_retry_count or effective_retry_count == -1:
                     next = 11 * 60 * 60
                 else:
                     next = None
-        elif retry_count == 0:
+        elif effective_retry_count == 0:
             next = None
 
         if next and not retry_interval:
             if interval is None:
                 interval = 12 * 60 * 60
             next = min(next, interval)
+            # 退避下限, 防止短 interval 把退避压平到几秒钟 (#24)
+            next = max(next, BaseWorker.MIN_BACKOFF)
         return next
 
     @staticmethod
@@ -261,33 +302,52 @@ class BaseWorker:
         userid = None
         title = f"QD 定时任务ID {task['id']}-{task.get('note',None)} 完成"
         content = ""
-        pushsw = json.loads(task['pushsw'])
-        async with self.db.transaction() as sql_session:
-            user = await self.db.user.get(task['userid'], fields=('id', 'email', 'email_verified', 'nickname', 'logtime'), sql_session=sql_session)
-            if not user:
-                await self.db.tasklog.add(task['id'], False, msg='no such user, disabled.', sql_session=sql_session)
-                await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
-                return False
-            userid = user['id']
 
-            tpl = await self.db.tpl.get(task['tplid'], fields=('id', 'userid', 'sitename', 'siteurl', 'tpl', 'interval', 'last_success'), sql_session=sql_session)
-            if not tpl:
-                await self.db.tasklog.add(task['id'], False, msg='tpl missing, task disabled.', sql_session=sql_session)
-                await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
-                return False
+        # [#23] pushsw 解析失败不得逃出 do(); 用安全默认值兜底, 保证流程继续推进.
+        try:
+            pushsw = json.loads(task['pushsw'])
+        except Exception as e:
+            logger_worker.error('taskid:%s parse pushsw failed: %s', task.get('id'), e,
+                                exc_info=config.traceback_print)
+            pushsw = {}
 
-            if task['disabled']:
-                await self.db.tasklog.add(task['id'], False, msg='task disabled.', sql_session=sql_session)
-                await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
-                return False
+        tpl = None
+        user = None
+        new_env = None
+        exec_error = None
+        start = time.perf_counter()
 
-            if tpl['userid'] and tpl['userid'] != user['id']:
-                await self.db.tasklog.add(task['id'], False, msg='no permission error, task disabled.', sql_session=sql_session)
-                await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
-                return False
+        # ------------------------------------------------------------------ #
+        # Phase 1: 取数 + 校验 + 解密输入 + 执行签到 (do_fetch).
+        #   只有"真正执行签到"的步骤(取数/解密/do_fetch)决定成功失败.
+        #   [#23] 取数/解密异常也纳入兜底(下方 except), 保证 next 一定推进,
+        #         不再 ~500ms 紧抓重试且永不退避.
+        # ------------------------------------------------------------------ #
+        try:
+            async with self.db.transaction() as sql_session:
+                user = await self.db.user.get(task['userid'], fields=('id', 'email', 'email_verified', 'nickname', 'logtime'), sql_session=sql_session)
+                if not user:
+                    await self.db.tasklog.add(task['id'], False, msg='no such user, disabled.', sql_session=sql_session)
+                    await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
+                    return False
+                userid = user['id']
 
-            start = time.perf_counter()
-            try:
+                tpl = await self.db.tpl.get(task['tplid'], fields=('id', 'userid', 'sitename', 'siteurl', 'tpl', 'interval', 'last_success'), sql_session=sql_session)
+                if not tpl:
+                    await self.db.tasklog.add(task['id'], False, msg='tpl missing, task disabled.', sql_session=sql_session)
+                    await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
+                    return False
+
+                if task['disabled']:
+                    await self.db.tasklog.add(task['id'], False, msg='task disabled.', sql_session=sql_session)
+                    await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
+                    return False
+
+                if tpl['userid'] and tpl['userid'] != user['id']:
+                    await self.db.tasklog.add(task['id'], False, msg='no permission error, task disabled.', sql_session=sql_session)
+                    await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
+                    return False
+
                 fetch_tpl = await self.db.user.decrypt(0 if not tpl['userid'] else task['userid'], tpl['tpl'], sql_session=sql_session)
                 env = dict(
                     variables=await self.db.user.decrypt(task['userid'], task['init_env'], sql_session=sql_session),
@@ -307,67 +367,76 @@ class BaseWorker:
                     }
                     new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env, [proxy])
 
-                variables = await self.db.user.encrypt(task['userid'], new_env['variables'], sql_session=sql_session)
-                session = await self.db.user.encrypt(task['userid'],
-                                                     new_env['session'].to_json() if hasattr(new_env['session'], 'to_json') else new_env['session'], sql_session=sql_session)
+                is_success = True
+        except Exception as e:
+            # 取数/解密/do_fetch 任一失败 -> 本次签到失败.
+            is_success = False
+            exec_error = e
+            if config.traceback_print:
+                traceback.print_exc()
 
-                newontime = json.loads(task["newontime"])
-                caltool = Cal()
-                if newontime['sw']:
-                    if 'mode' not in newontime:
-                        newontime['mode'] = 'ontime'
-                    if newontime['mode'] == 'ontime':
-                        newontime['date'] = (datetime.datetime.now(
-                        ) + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-                    next = caltool.cal_next_ts(newontime)['ts']
-                else:
-                    next = time.time() + \
-                        max((tpl['interval'] if tpl['interval']
-                            else 24 * 60 * 60), 1 * 60)
-                    if tpl['interval'] is None:
-                        next = self.fix_next_time(next)
-
-                # success feedback
-                await self.db.tasklog.add(task['id'], success=True, msg=new_env['variables'].get('__log__'), sql_session=sql_session)
-                await self.db.task.mod(task['id'],
-                                       last_success=time.time(),
-                                       last_failed_count=0,
-                                       success_count=task['success_count'] + 1,
-                                       env=variables,
-                                       session=session,
-                                       mtime=time.time(),
-                                       next=next,
-                                       sql_session=sql_session)
-
+        # ------------------------------------------------------------------ #
+        # Phase 2: 善后(bookkeeping). 独立事务, 失败只记日志,
+        #          [B] 绝不回退已成立的成功/失败判定.
+        # ------------------------------------------------------------------ #
+        if is_success:
+            # --- 成功善后: 算下次时间 / 写成功日志 / 更新 task (独立事务) ---
+            try:
+                async with self.db.transaction() as sql_session:
+                    variables = await self.db.user.encrypt(task['userid'], new_env['variables'], sql_session=sql_session)
+                    session = await self.db.user.encrypt(task['userid'],
+                                                         new_env['session'].to_json() if hasattr(new_env['session'], 'to_json') else new_env['session'], sql_session=sql_session)
+                    next = self._cal_success_next(task, tpl)
+                    await self.db.tasklog.add(task['id'], success=True, msg=new_env['variables'].get('__log__'), sql_session=sql_session)
+                    await self.db.task.mod(task['id'],
+                                           last_success=time.time(),
+                                           last_failed_count=0,
+                                           success_count=task['success_count'] + 1,
+                                           env=variables,
+                                           session=session,
+                                           mtime=time.time(),
+                                           next=next,
+                                           sql_session=sql_session)
                 t = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 title = f"QD定时任务 {tpl['sitename']}-{task['note']} 成功"
                 content = new_env['variables'].get('__log__')
                 content = f"{t} \\r\\n日志：{content}"
                 should_push = 0x2
-
                 logger_worker.info('taskid:%d tplid:%d successed! %.5fs',
                                    task['id'], task['tplid'], time.perf_counter() - start)
-                # delete log
-                await self.clear_log(task['id'], sql_session=sql_session)
+            except Exception as e:
+                # [B] 成功善后写库失败: 仅记日志, 不回退成功判定, 不写失败记录.
+                logger_worker.error('taskid:%s tplid:%s post-success bookkeeping failed: %s',
+                                    task.get('id'), task.get('tplid'), e, exc_info=config.traceback_print)
+
+            # --- 清理旧日志: 独立事务, 失败只记日志, 不影响成功判定 ([B]) ---
+            try:
+                async with self.db.transaction() as sql_session:
+                    await self.clear_log(task['id'], sql_session=sql_session)
                 logger_worker.info(
                     'taskid:%d tplid:%d clear log.', task['id'], task['tplid'])
-                is_success = True
             except Exception as e:
-                # failed feedback
-                if config.traceback_print:
-                    traceback.print_exc()
+                logger_worker.error('taskid:%s tplid:%s clear log failed: %s',
+                                    task.get('id'), task.get('tplid'), e, exc_info=config.traceback_print)
+        else:
+            # --- 失败善后: 计算退避 / 写失败日志 / 更新 task (独立事务) ---
+            e = exec_error
+            try:
+                is_temporary = self._is_temporary_error(e)
                 next_time_delta = self.failed_count_to_time(
-                    task['last_failed_count'], task['retry_count'], task['retry_interval'], tpl['interval'])
+                    task['last_failed_count'], task['retry_count'], task['retry_interval'],
+                    tpl['interval'] if tpl else None, is_temporary=is_temporary)
 
                 t = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                title = f"QD定时任务 {tpl['sitename']}-{task['note']} 失败"
+                sitename = tpl['sitename'] if tpl else ''
+                title = f"QD定时任务 {sitename}-{task.get('note')} 失败"
                 content = f"{t} \\r\\n日志：{e}"
                 disabled = False
                 if next_time_delta:
                     next = time.time() + next_time_delta
                     content = content + \
                         f" \\r\\n下次运行时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(next))}"
-                    logtime = json.loads(user['logtime'])
+                    logtime = json.loads(user['logtime']) if user and user.get('logtime') else {}
                     if 'ErrTolerateCnt' not in logtime:
                         logtime['ErrTolerateCnt'] = 0
                     if logtime['ErrTolerateCnt'] <= task['last_failed_count']:
@@ -378,36 +447,80 @@ class BaseWorker:
                     content = " \\r\\n任务已禁用"
                     should_push = 0x1
 
-                await self.db.tasklog.add(task['id'], success=False, msg=str(e), sql_session=sql_session)
-                await self.db.task.mod(task['id'],
-                                       last_failed=time.time(),
-                                       failed_count=task['failed_count'] + 1,
-                                       last_failed_count=task['last_failed_count'] + 1,
-                                       disabled=disabled,
-                                       mtime=time.time(),
-                                       next=next,
-                                       sql_session=sql_session)
+                async with self.db.transaction() as sql_session:
+                    await self.db.tasklog.add(task['id'], success=False, msg=str(e), sql_session=sql_session)
+                    await self.db.task.mod(task['id'],
+                                           last_failed=time.time(),
+                                           failed_count=task['failed_count'] + 1,
+                                           last_failed_count=task['last_failed_count'] + 1,
+                                           disabled=disabled,
+                                           mtime=time.time(),
+                                           next=next,
+                                           sql_session=sql_session)
 
-                logger_worker.error('taskid:%d tplid:%d failed! %.4fs \r\n%s', task['id'], task['tplid'], time.perf_counter(
+                logger_worker.error('taskid:%s tplid:%s failed! %.4fs \r\n%s', task.get('id'), task.get('tplid'), time.perf_counter(
                 ) - start, str(e).replace('\\r\\n', '\r\n'))
+            except Exception as e2:
+                # 失败善后本身写库失败: 仅记日志, 不再抛出 (避免 next 不推进).
+                logger_worker.error('taskid:%s failure bookkeeping failed: %s',
+                                    task.get('id'), e2, exc_info=config.traceback_print)
 
-        async with self.db.transaction() as sql_session:
-            if tpl and tpl.get('id'):
-                if is_success:
-                    await self.db.tpl.incr_success(tpl['id'], sql_session=sql_session)
-                else:
-                    await self.db.tpl.incr_failed(tpl['id'], sql_session=sql_session)
+        # ------------------------------------------------------------------ #
+        # [#36] 观测层: 统计 / 推送. 各自独立 try, 在判定提交之后执行,
+        #       任何异常都不得影响签到成功/失败判定.
+        # ------------------------------------------------------------------ #
+        if tpl and tpl.get('id'):
+            try:
+                async with self.db.transaction() as sql_session:
+                    if is_success:
+                        await self.db.tpl.incr_success(tpl['id'], sql_session=sql_session)
+                    else:
+                        await self.db.tpl.incr_failed(tpl['id'], sql_session=sql_session)
+            except Exception as e:
+                logger_worker.error('taskid:%s update tpl stats failed: %s',
+                                    task.get('id'), e, exc_info=config.traceback_print)
 
         if should_push:
             try:
                 # Pass sql_session=None so Pusher opens its own fresh session;
-                # the previous session was closed when the second transaction
-                # block above exited.
+                # the previous session was closed when the transaction block
+                # above exited.
                 pushtool = Pusher(self.db, sql_session=None)
                 await pushtool.pusher(userid, pushsw, should_push, title, content)
             except Exception as e:
-                logger_worker.error('taskid:%d push failed! %s', task['id'], str(e), exc_info=config.traceback_print)
+                logger_worker.error('taskid:%s push failed! %s', task.get('id'), str(e), exc_info=config.traceback_print)
         return is_success
+
+    def _cal_success_next(self, task, tpl):
+        """Compute the next run timestamp for a successful task.
+
+        cal_next_ts returns ``{'r': error}`` without a ``'ts'`` key when the
+        ontime/cron expression is invalid; in that case we degrade to the
+        interval-based schedule instead of raising KeyError.
+        """
+        newontime = json.loads(task["newontime"])
+        caltool = Cal()
+        if newontime.get('sw'):
+            if 'mode' not in newontime:
+                newontime['mode'] = 'ontime'
+            if newontime['mode'] == 'ontime':
+                newontime['date'] = (datetime.datetime.now(
+                ) + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+            next = caltool.cal_next_ts(newontime).get('ts')
+            if next is None:
+                next = self._interval_next(tpl)
+        else:
+            next = self._interval_next(tpl)
+        return next
+
+    @staticmethod
+    def _interval_next(tpl):
+        """Interval-based next run timestamp (mirrors the legacy success path)."""
+        interval = tpl['interval'] if tpl else None
+        next = time.time() + max((interval if interval else 24 * 60 * 60), 1 * 60)
+        if interval is None:
+            next = BaseWorker.fix_next_time(next)
+        return next
 
 
 class QueueWorker(BaseWorker):

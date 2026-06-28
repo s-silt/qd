@@ -123,6 +123,11 @@ venv.bak/
 # qd
 database.db
 config.json
+# 自动持久化的密钥(不应入库)
+.aes_key
+.cookie_secret
+config/.aes_key
+config/.cookie_secret
 database - 副本.db
 *.db-journal
 qiandao.rar

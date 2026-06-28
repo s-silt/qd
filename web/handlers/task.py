@@ -514,67 +514,53 @@ class TotalLogHandler(BaseHandler):
 
 
 class TaskLogDelHandler(BaseHandler):
-    @authenticated
-    async def get(self, taskid):
-        # user = self.current_user
-        async with self.db.transaction() as sql_session:
-            self.check_permission(
-                await self.db.task.get(
-                    taskid, fields=("userid",), sql_session=sql_session
-                )
-            )
-            tasklog = await self.db.tasklog.list(
-                taskid=taskid,
-                fields=("id", "success", "ctime", "msg"),
-                sql_session=sql_session,
-            )
-            for log in tasklog:
-                await self.db.tasklog.delete(log["id"], sql_session=sql_session)
-            tasklog = await self.db.tasklog.list(
-                taskid=taskid,
-                fields=("id", "success", "ctime", "msg"),
-                sql_session=sql_session,
-            )
-            await self.db.task.mod(
-                taskid, success_count=0, failed_count=0, sql_session=sql_session
-            )
-
-        self.redirect(f"/task/{int(taskid)}/log")
-        return
-
+    # 破坏性日志清理统一走 POST: 原 GET 实现可被 <img src=...> 触发 CSRF 清空他人/本人
+    # 日志。改为 POST 后浏览器自动发起的跨站请求无法再以 <img>/<link> 等 GET 向量触发。
     @authenticated
     async def post(self, taskid):
-        # user = self.current_user
         envs = {}
         for key in self.request.body_arguments:
             envs[key] = self.get_body_arguments(key)
         body_arguments = envs
-        day = 365
-        if "day" in body_arguments:
-            day = int(json.loads(body_arguments["day"][0]))
 
         async with self.db.transaction() as sql_session:
-            tasklog = await self.db.tasklog.list(
-                taskid=taskid,
-                fields=("id", "success", "ctime", "msg"),
-                sql_session=sql_session,
+            # 归属校验, 防止越权清空他人签到日志 (IDOR); day=0 等参数本会清光全部。
+            self.check_permission(
+                await self.db.task.get(
+                    taskid, fields=("userid",), sql_session=sql_session
+                ),
+                "w",
             )
-            for log in tasklog:
-                if (time.time() - log["ctime"]) > (day * 24 * 60 * 60):
+            if "day" in body_arguments:
+                # 仅保留最近 N 天日志。
+                day = int(json.loads(body_arguments["day"][0]))
+                tasklog = await self.db.tasklog.list(
+                    taskid=taskid,
+                    fields=("id", "success", "ctime", "msg"),
+                    sql_session=sql_session,
+                )
+                for log in tasklog:
+                    if (time.time() - log["ctime"]) > (day * 24 * 60 * 60):
+                        await self.db.tasklog.delete(log["id"], sql_session=sql_session)
+            else:
+                # 清空全部日志并重置计数 (原 GET "清空" 行为)。
+                tasklog = await self.db.tasklog.list(
+                    taskid=taskid, fields=("id",), sql_session=sql_session
+                )
+                for log in tasklog:
                     await self.db.tasklog.delete(log["id"], sql_session=sql_session)
-            tasklog = await self.db.tasklog.list(
-                taskid=taskid,
-                fields=("id", "success", "ctime", "msg"),
-                sql_session=sql_session,
-            )
+                await self.db.task.mod(
+                    taskid, success_count=0, failed_count=0, sql_session=sql_session
+                )
 
         self.redirect(f"/task/{int(taskid)}/log")
         return
 
 
 class TaskLogSuccessDelHandler(BaseHandler):
+    # 破坏性操作走 POST, 防止 <img src> 等 GET 向量 CSRF 清零成功计数。
     @authenticated
-    async def get(self, taskid):
+    async def post(self, taskid):
         # user = self.current_user
         async with self.db.transaction() as sql_session:
             self.check_permission(
@@ -602,8 +588,9 @@ class TaskLogSuccessDelHandler(BaseHandler):
 
 
 class TaskLogFailDelHandler(BaseHandler):
+    # 破坏性操作走 POST, 防止 <img src> 等 GET 向量 CSRF 清零失败计数。
     @authenticated
-    async def get(self, taskid):
+    async def post(self, taskid):
         # user = self.current_user
         async with self.db.transaction() as sql_session:
             self.check_permission(
@@ -703,6 +690,11 @@ class TaskSetTimeHandler(BaseHandler):
 
     @authenticated
     async def post(self, taskid):
+        # 校验任务归属当前用户, 防止越权修改他人 next/重新 enable (IDOR)。
+        # 必须在 try 之外, 否则 HTTPError 会被下方 except 吞掉并渲染成 200。
+        self.check_permission(
+            await self.db.task.get(taskid, fields=("id", "userid")), "w"
+        )
         log = "设置成功"
         try:
             envs = {}
@@ -849,8 +841,18 @@ class TasksDelHandler(BaseHandler):
                         if new_group == "":
                             new_group = "None"
                         for taskid in taskids:
+                            # 归属校验, 防止越权批量改他人任务分组 (IDOR)。
+                            self.check_permission(
+                                await self.db.task.get(
+                                    taskid,
+                                    fields=("id", "userid"),
+                                    sql_session=sql_session,
+                                ),
+                                "w",
+                            )
+                            # 列名修正: 正确列为 _groups, 原 `groups` 不存在会直接报错。
                             await self.db.task.mod(
-                                taskid, groups=new_group, sql_session=sql_session
+                                taskid, _groups=new_group, sql_session=sql_session
                             )
 
                 await self.finish(

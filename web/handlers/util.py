@@ -4,10 +4,13 @@
 
 import base64
 import datetime
+import functools
 import html
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 import traceback
 import urllib
@@ -19,11 +22,13 @@ from Crypto import Random
 from Crypto.Cipher import PKCS1_v1_5
 from Crypto.PublicKey import RSA
 from tornado import gen
+from tornado.ioloop import IOLoop
 from tornado.web import HTTPError, authenticated
 
 import config
 from config import delay_max_timeout, strtobool
 from libs.log import Log
+from libs.security import resolve_blocked_reason
 from web.handlers.base import BaseHandler, logger_web_handler
 
 logger_web_util = Log("QD.Web.Util").getlogger()
@@ -806,29 +811,42 @@ class DdddOcrServer:
                 and config.extra_onnx_name[0]
                 and config.extra_charsets_name[0]
             ):
-                for onnx_name in config.extra_onnx_name:
-                    self.extra[onnx_name] = ddddocr.DdddOcr(
-                        show_ad=False,
-                        import_onnx_path=os.path.join(
-                            os.path.abspath(
-                                os.path.dirname(
-                                    os.path.dirname(os.path.dirname(__file__))
-                                )
+                config_dir = os.path.join(
+                    os.path.abspath(
+                        os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                    ),
+                    "config",
+                )
+                # [#28] onnx 与 charsets 文件名【配对】使用: charsets_path 必须取
+                # extra_charsets_name 而非 onnx_name(旧代码误用 onnx_name, 一旦两者
+                # 不同名就加载失败)。且每个 extra 模型单独 try/except 隔离, 单个坏模型
+                # 不再连坐其它模型 / 整个 OCR。
+                for onnx_name, charsets_name in zip(
+                    config.extra_onnx_name, config.extra_charsets_name
+                ):
+                    if not onnx_name or not charsets_name:
+                        continue
+                    try:
+                        self.extra[onnx_name] = ddddocr.DdddOcr(
+                            show_ad=False,
+                            import_onnx_path=os.path.join(
+                                config_dir, f"{onnx_name}.onnx"
                             ),
-                            "config",
-                            f"{onnx_name}.onnx",
-                        ),
-                        charsets_path=os.path.join(
-                            os.path.abspath(
-                                os.path.dirname(
-                                    os.path.dirname(os.path.dirname(__file__))
-                                )
+                            charsets_path=os.path.join(
+                                config_dir, f"{charsets_name}.json"
                             ),
-                            "config",
-                            f"{onnx_name}.json",
-                        ),
-                    )
-                    logger_web_util.info("成功加载自定义Onnx模型: %s.onnx", onnx_name)
+                        )
+                        logger_web_util.info(
+                            "成功加载自定义Onnx模型: %s.onnx (charsets: %s.json)",
+                            onnx_name,
+                            charsets_name,
+                        )
+                    except Exception as e:  # noqa: BLE001 - 单模型失败隔离, 不影响其它
+                        logger_web_util.warning(
+                            "加载自定义Onnx模型失败, 已跳过该模型(不影响其它): %s.onnx, 原因: %s",
+                            onnx_name,
+                            e,
+                        )
 
     def classification(self, img: bytes, old=False, extra_onnx_name=""):
         if extra_onnx_name:
@@ -856,17 +874,128 @@ class DdddOcrServer:
         return self.slide.slide_match(imgtarget, imgbg, simple_target=True)
 
 
-if ddddocr:
-    DDDDOCR_SERVER: Optional[DdddOcrServer] = DdddOcrServer()
-else:
-    DDDDOCR_SERVER = None
+# OCR 服务采用【惰性初始化】: 启动 import 阶段【不】加载 onnx 模型。
+#
+# 背景: 之前这里在模块 import 时就 `DdddOcrServer()`, 而其 __init__ 会同步加载
+# 4 个 onnx 模型。onnxruntime 在缺少 AVX/AVX2 指令集的 CPU 上加载模型会直接触发
+# SIGILL(Illegal instruction, core dumped)——这是原生崩溃, Python 的 try/except
+# 根本拦不住, 会让整个进程在启动 import 阶段就死掉; 配合 docker `restart: unless-stopped`
+# 表现为容器秒退 / 反复重启(本仓库 fork 启用 ddddocr 后即出现此现象)。
+#
+# 改造后:
+#   1. 启动不再触碰 onnxruntime, 容器总能正常起来;
+#   2. 首次真正用到 OCR 时才构建, 并用 try/except 兜住【Python 级】失败(模型文件缺失、
+#      onnxruntime 抛异常等)→ 降级为「OCR 不可用」而非拖垮整个服务;
+#   3. 对连"用一次都会 SIGILL"的老 CPU, 可设 ENABLE_DDDDOCR=false 彻底禁用, 永不加载模型。
+_ddddocr_singleton: Optional[DdddOcrServer] = None
+_ddddocr_init_failed = False
+# [#26] onnxruntime 子进程自检结果缓存: None=未探测, True/False=已探测。
+_ddddocr_probe_ok: Optional[bool] = None
+
+# [#26] 在【子进程】里真正实例化 onnxruntime 会话并跑一次推理。
+# 缺 AVX/AVX2 的 CPU 上 onnxruntime 会触发 SIGILL(Illegal instruction)——这是原生崩溃,
+# Python try/except 拦不住。放进子进程后, SIGILL 只会杀死子进程(returncode 非 0),
+# 主进程据此判定「本机不可用」并自动降级禁用, 而不会被一起带走。
+# 1x1 PNG 仅用于驱动一次推理路径; 推理本身的 Python 级异常被吞掉(我们只关心是否原生崩溃)。
+_ONNX_PROBE_CODE = (
+    "import base64, ddddocr\n"
+    "ocr = ddddocr.DdddOcr(show_ad=False)\n"  # 建会话 = 加载模型(SIGILL 高发点)
+    "img = base64.b64decode("
+    "'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+    "+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC')\n"
+    "try:\n"
+    "    ocr.classification(img)\n"  # 跑一次推理(亦可能 SIGILL)
+    "except Exception:\n"
+    "    pass\n"
+    "print('ONNX_OK')\n"
+)
+
+
+def _probe_onnxruntime_available() -> bool:
+    """子进程探测 onnxruntime 能否真正加载/推理而不触发原生崩溃。
+
+    返回 True 表示本机可安全使用 OCR; False 表示应降级禁用。结果带缓存, 仅探测一次。
+    """
+    global _ddddocr_probe_ok
+    if _ddddocr_probe_ok is not None:
+        return _ddddocr_probe_ok
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _ONNX_PROBE_CODE],
+            capture_output=True,
+            timeout=60,
+        )
+        _ddddocr_probe_ok = proc.returncode == 0
+        if not _ddddocr_probe_ok:
+            logger_web_util.warning(
+                "onnxruntime 子进程自检未通过(returncode=%s), 自动降级禁用验证码 OCR。"
+                "常见原因: CPU 缺少 AVX/AVX2 指令集。stderr: %s",
+                proc.returncode,
+                (proc.stderr or b"")[:500],
+            )
+    except Exception as e:  # noqa: BLE001 - 自检本身异常一律保守禁用, 不拖垮服务
+        logger_web_util.warning(
+            "onnxruntime 子进程自检异常, 保守降级禁用验证码 OCR: %s", e
+        )
+        _ddddocr_probe_ok = False
+    return _ddddocr_probe_ok
+
+
+async def _run_in_executor(func, *args, **kwargs):
+    """[#27] 把同步阻塞调用(onnx 加载/推理)丢进线程池, 不阻塞 Tornado IOLoop。"""
+    return await IOLoop.current().run_in_executor(
+        None, functools.partial(func, *args, **kwargs)
+    )
+
+
+def get_ddddocr_server() -> Optional[DdddOcrServer]:
+    """惰性获取 DdddOcrServer 单例。不可用时返回 None(调用方据此回落 HTTP 406)。
+
+    线程安全性: Tornado 单线程事件循环内调用, 无需加锁。
+    """
+    global _ddddocr_singleton, _ddddocr_init_failed
+    if _ddddocr_singleton is not None:
+        return _ddddocr_singleton
+    if (
+        _ddddocr_init_failed
+        or not config.enable_ddddocr
+        or ddddocr is None
+        or not hasattr(ddddocr, "DdddOcr")
+    ):
+        return None
+    # [#26] 默认保持开启, 但先用子进程探测 onnxruntime 是否真的能加载/推理。
+    # 无 AVX 的老 CPU 会自动探测失败 → 降级禁用, 可用机正常使用。
+    if not _probe_onnxruntime_available():
+        _ddddocr_init_failed = True
+        return None
+    try:
+        _ddddocr_singleton = DdddOcrServer()
+    except Exception as e:  # noqa: BLE001 - 任何 Python 级初始化失败都应降级, 不能拖垮服务
+        _ddddocr_init_failed = True
+        logger_web_util.warning(
+            "DdddOCR 初始化失败, 已禁用验证码 OCR 功能(不影响框架其它功能): %s", e
+        )
+        return None
+    return _ddddocr_singleton
 
 
 async def get_img_from_url(imgurl):
+    # [D#8/#9] 防 SSRF: 限定 http/https scheme, 请求前对目标主机过 resolve_blocked_reason
+    # (复用 libs.security 的统一守卫), 禁用重定向(避免 3xx 跳到受限地址绕过校验),
+    # 并移除 verify_ssl=False(不再禁用证书校验)。
+    parsed = urllib.parse.urlparse(imgurl)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise HTTPError(400, f"不支持的图片 URL scheme: {scheme or '(空)'}")
+    blocked = resolve_blocked_reason(parsed.hostname or "")
+    if blocked:
+        raise HTTPError(403, f"图片地址被安全策略拦截(防 SSRF): {blocked}")
     async with aiohttp.ClientSession(conn_timeout=config.connect_timeout) as session:
         async with session.get(
-            imgurl, verify_ssl=False, timeout=config.request_timeout
+            imgurl, timeout=config.request_timeout, allow_redirects=False
         ) as res:
+            if res.status in (301, 302, 303, 307, 308):
+                raise HTTPError(403, "图片地址发生重定向, 已拒绝(防 SSRF 绕过)")
             content = await res.read()
             base64_data = base64.b64encode(content).decode()
             return base64.b64decode(base64_data)
@@ -894,21 +1023,27 @@ async def get_img(
 
 
 class DdddOcrHandler(BaseHandler):
+    @authenticated
     async def get(self):
+        self.evil(+1)
+        # [#40] 可用性检查移出 try: 不可用时透传 HTTPError(406), 不再被吞成 200。
+        server = await _run_in_executor(get_ddddocr_server)
+        if not server:
+            raise HTTPError(406)
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
-                img = self.get_argument("img", "")
-                imgurl = self.get_argument("imgurl", "")
-                old = bool(strtobool(self.get_argument("old", "False")))
-                extra_onnx_name = self.get_argument("extra_onnx_name", "")
-                img = await get_img(img, imgurl)
-                rtv["Result"] = DDDDOCR_SERVER.classification(
-                    img, old=old, extra_onnx_name=extra_onnx_name
-                )
-                rtv["状态"] = "OK"
-            else:
-                raise HTTPError(406)
+            img = self.get_argument("img", "")
+            imgurl = self.get_argument("imgurl", "")
+            old = bool(strtobool(self.get_argument("old", "False")))
+            extra_onnx_name = self.get_argument("extra_onnx_name", "")
+            img = await get_img(img, imgurl)
+            # [#27] onnx 推理同步阻塞, 放线程池避免阻塞 IOLoop。
+            rtv["Result"] = await _run_in_executor(
+                server.classification, img, old=old, extra_onnx_name=extra_onnx_name
+            )
+            rtv["状态"] = "OK"
+        except HTTPError:
+            raise  # [#40] 透传非 200 状态(如 get_img 的 415 / SSRF 的 403)
         except Exception as e:
             rtv["状态"] = str(e)
 
@@ -916,31 +1051,35 @@ class DdddOcrHandler(BaseHandler):
         self.write(json.dumps(rtv, ensure_ascii=False, indent=4))
         return
 
+    @authenticated
     async def post(self):
+        self.evil(+1)
+        server = await _run_in_executor(get_ddddocr_server)
+        if not server:
+            raise HTTPError(406)
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
-                if self.request.headers.get("Content-Type", "").startswith(
-                    "application/json"
-                ):
-                    body_dict = json.loads(self.request.body)
-                    img = body_dict.get("img", "")
-                    imgurl = body_dict.get("imgurl", "")
-                    old = bool(strtobool(body_dict.get("old", "False")))
-                    extra_onnx_name = body_dict.get("extra_onnx_name", "")
-                else:
-                    img = self.get_argument("img", "")
-                    imgurl = self.get_argument("imgurl", "")
-                    old = bool(strtobool(self.get_argument("old", "False")))
-                    extra_onnx_name = self.get_argument("extra_onnx_name", "")
-
-                img = await get_img(img, imgurl)
-                rtv["Result"] = DDDDOCR_SERVER.classification(
-                    img, old=old, extra_onnx_name=extra_onnx_name
-                )
-                rtv["状态"] = "OK"
+            if self.request.headers.get("Content-Type", "").startswith(
+                "application/json"
+            ):
+                body_dict = json.loads(self.request.body)
+                img = body_dict.get("img", "")
+                imgurl = body_dict.get("imgurl", "")
+                old = bool(strtobool(body_dict.get("old", "False")))
+                extra_onnx_name = body_dict.get("extra_onnx_name", "")
             else:
-                raise HTTPError(406)
+                img = self.get_argument("img", "")
+                imgurl = self.get_argument("imgurl", "")
+                old = bool(strtobool(self.get_argument("old", "False")))
+                extra_onnx_name = self.get_argument("extra_onnx_name", "")
+
+            img = await get_img(img, imgurl)
+            rtv["Result"] = await _run_in_executor(
+                server.classification, img, old=old, extra_onnx_name=extra_onnx_name
+            )
+            rtv["状态"] = "OK"
+        except HTTPError:
+            raise
         except Exception as e:
             rtv["状态"] = str(e)
 
@@ -950,17 +1089,21 @@ class DdddOcrHandler(BaseHandler):
 
 
 class DdddDetHandler(BaseHandler):
+    @authenticated
     async def get(self):
+        self.evil(+1)
+        server = await _run_in_executor(get_ddddocr_server)
+        if not server:
+            raise HTTPError(406)
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
-                img = self.get_argument("img", "")
-                imgurl = self.get_argument("imgurl", "")
-                img = await get_img(img, imgurl)
-                rtv["Result"] = DDDDOCR_SERVER.detection(img)
-                rtv["状态"] = "OK"
-            else:
-                raise HTTPError(406)
+            img = self.get_argument("img", "")
+            imgurl = self.get_argument("imgurl", "")
+            img = await get_img(img, imgurl)
+            rtv["Result"] = await _run_in_executor(server.detection, img)
+            rtv["状态"] = "OK"
+        except HTTPError:
+            raise
         except Exception as e:
             rtv["状态"] = str(e)
 
@@ -968,24 +1111,28 @@ class DdddDetHandler(BaseHandler):
         self.write(json.dumps(rtv, ensure_ascii=False, indent=None))
         return
 
+    @authenticated
     async def post(self):
+        self.evil(+1)
+        server = await _run_in_executor(get_ddddocr_server)
+        if not server:
+            raise HTTPError(406)
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
-                if self.request.headers.get("Content-Type", "").startswith(
-                    "application/json"
-                ):
-                    body_dict = json.loads(self.request.body)
-                    img = body_dict.get("img", "")
-                    imgurl = body_dict.get("imgurl", "")
-                else:
-                    img = self.get_argument("img", "")
-                    imgurl = self.get_argument("imgurl", "")
-                img = await get_img(img, imgurl)
-                rtv["Result"] = DDDDOCR_SERVER.detection(img)
-                rtv["状态"] = "OK"
+            if self.request.headers.get("Content-Type", "").startswith(
+                "application/json"
+            ):
+                body_dict = json.loads(self.request.body)
+                img = body_dict.get("img", "")
+                imgurl = body_dict.get("imgurl", "")
             else:
-                raise Exception(404)
+                img = self.get_argument("img", "")
+                imgurl = self.get_argument("imgurl", "")
+            img = await get_img(img, imgurl)
+            rtv["Result"] = await _run_in_executor(server.detection, img)
+            rtv["状态"] = "OK"
+        except HTTPError:
+            raise
         except Exception as e:
             rtv["状态"] = str(e)
 
@@ -995,24 +1142,32 @@ class DdddDetHandler(BaseHandler):
 
 
 class DdddSlideHandler(BaseHandler):
+    @authenticated
     async def get(self):
+        self.evil(+1)
+        server = await _run_in_executor(get_ddddocr_server)
+        if not server:
+            raise HTTPError(406)
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
-                imgtarget = self.get_argument("imgtarget", "")
-                imgbg = self.get_argument("imgbg", "")
-                simple_target = bool(
-                    strtobool(self.get_argument("simple_target", "False"))
-                )
-                comparison = bool(strtobool(self.get_argument("comparison", "False")))
-                imgtarget = await get_img(imgtarget, "")
-                imgbg = await get_img(imgbg, "")
-                rtv["Result"] = DDDDOCR_SERVER.slide_match(
-                    imgtarget, imgbg, comparison=comparison, simple_target=simple_target
-                )
-                rtv["状态"] = "OK"
-            else:
-                raise HTTPError(406)
+            imgtarget = self.get_argument("imgtarget", "")
+            imgbg = self.get_argument("imgbg", "")
+            simple_target = bool(
+                strtobool(self.get_argument("simple_target", "False"))
+            )
+            comparison = bool(strtobool(self.get_argument("comparison", "False")))
+            imgtarget = await get_img(imgtarget, "")
+            imgbg = await get_img(imgbg, "")
+            rtv["Result"] = await _run_in_executor(
+                server.slide_match,
+                imgtarget,
+                imgbg,
+                comparison=comparison,
+                simple_target=simple_target,
+            )
+            rtv["状态"] = "OK"
+        except HTTPError:
+            raise
         except Exception as e:
             rtv["状态"] = str(e)
 
@@ -1020,38 +1175,46 @@ class DdddSlideHandler(BaseHandler):
         self.write(json.dumps(rtv, ensure_ascii=False, indent=None))
         return
 
+    @authenticated
     async def post(self):
+        self.evil(+1)
+        server = await _run_in_executor(get_ddddocr_server)
+        if not server:
+            raise HTTPError(406)
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
-                if self.request.headers.get("Content-Type", "").startswith(
-                    "application/json"
-                ):
-                    body_dict = json.loads(self.request.body)
-                    imgtarget = body_dict.get("imgtarget", "")
-                    imgbg = body_dict.get("imgbg", "")
-                    simple_target = bool(
-                        strtobool(body_dict.get("simple_target", "False"))
-                    )
-                    comparison = bool(strtobool(body_dict.get("comparison", "False")))
-                else:
-                    imgtarget = self.get_argument("imgtarget", "")
-                    imgbg = self.get_argument("imgbg", "")
-                    simple_target = bool(
-                        strtobool(self.get_argument("simple_target", "False"))
-                    )
-                    comparison = bool(
-                        strtobool(self.get_argument("comparison", "False"))
-                    )
-
-                imgtarget = await get_img(imgtarget, "")
-                imgbg = await get_img(imgbg, "")
-                rtv["Result"] = DDDDOCR_SERVER.slide_match(
-                    imgtarget, imgbg, comparison=comparison, simple_target=simple_target
+            if self.request.headers.get("Content-Type", "").startswith(
+                "application/json"
+            ):
+                body_dict = json.loads(self.request.body)
+                imgtarget = body_dict.get("imgtarget", "")
+                imgbg = body_dict.get("imgbg", "")
+                simple_target = bool(
+                    strtobool(body_dict.get("simple_target", "False"))
                 )
-                rtv["状态"] = "OK"
+                comparison = bool(strtobool(body_dict.get("comparison", "False")))
             else:
-                raise HTTPError(406)
+                imgtarget = self.get_argument("imgtarget", "")
+                imgbg = self.get_argument("imgbg", "")
+                simple_target = bool(
+                    strtobool(self.get_argument("simple_target", "False"))
+                )
+                comparison = bool(
+                    strtobool(self.get_argument("comparison", "False"))
+                )
+
+            imgtarget = await get_img(imgtarget, "")
+            imgbg = await get_img(imgbg, "")
+            rtv["Result"] = await _run_in_executor(
+                server.slide_match,
+                imgtarget,
+                imgbg,
+                comparison=comparison,
+                simple_target=simple_target,
+            )
+            rtv["状态"] = "OK"
+        except HTTPError:
+            raise
         except Exception as e:
             rtv["状态"] = str(e)
 

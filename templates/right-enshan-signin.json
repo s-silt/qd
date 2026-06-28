@@ -15,13 +15,13 @@
     },
     "rule": {
       "success_asserts": [
-        {"re": "name=\"formhash\"\\s+value=\"[0-9a-fA-F]+\"|action=logout(?:&amp;|&)formhash=", "from": "content"}
+        {"re": "name=\"formhash\"\\s+value=\"[0-9a-zA-Z]+\"|action=logout(?:&amp;|&)formhash=[0-9a-zA-Z]+", "from": "content"}
       ],
       "failed_asserts": [
         {"re": "您需要先登录|请先登录|未登录|action=login|加速乐|jsl_clearance|安全验证|请开启JavaScript", "from": "content"}
       ],
       "extract_variables": [
-        {"name": "formhash", "re": "name=\"formhash\"\\s+value=\"([0-9a-fA-F]+)\"", "from": "content"}
+        {"name": "formhash", "re": "(?:name=\"formhash\"\\s+value=\"|action=logout(?:&amp;|&)formhash=)([0-9a-zA-Z]+)", "from": "content"}
       ]
     }
   },
@@ -46,10 +46,10 @@
     },
     "rule": {
       "success_asserts": [
-        {"re": "\"success\"\\s*:\\s*true|\"status\"\\s*:\\s*1|签到成功|已签到|已经签到|签到过|今天已|今日已", "from": "content"}
+        {"re": "\"success\"\\s*:\\s*true|\"status\"\\s*:\\s*1|签到成功|已签到|已经签到|已签到过|今天已|今日已", "from": "content"}
       ],
       "failed_asserts": [
-        {"re": "未登录|请先登录|来路不正确|令牌错误|表单令牌|非法请求|操作频繁|系统繁忙|加速乐|jsl_clearance|安全验证|<!DOCTYPE html|<html", "from": "content"}
+        {"re": "未登录|请先登录|来路不正确|令牌错误|表单令牌|非法请求|操作频繁|系统繁忙|加速乐|jsl_clearance|安全验证|请开启JavaScript|name=\"loginhash\"|name=\"loginsubmit\"|mod=logging(?:&amp;|&)action=login", "from": "content"}
       ],
       "extract_variables": [
         {"name": "__log__", "re": "\"message\"\\s*:\\s*\"(.*?)\"", "from": "content"}

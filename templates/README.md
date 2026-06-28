@@ -19,3 +19,10 @@
 | [`linkai-signin.json`](./linkai-signin.json) | [LinkAI](https://link-ai.tech) | 每日签到领积分（两步：账号密码登录取 token → 签到） | [LinkAI 每日自动签到](../web/docs/zh_CN/guide/linkai-checkin.md) |
 
 > 需要的变量、Cloudflare 处理、定时设置等细节，请看每个模板对应的文档。
+
+## 凭据安全说明（重要）
+
+- **模板内不得写死真实凭据。** 仓库里的模板只包含 `{{username}}` / `{{password}}` / `{{cookie}}` 等占位符（变量），真实账号、密码、Cookie、token 都由你在 QD 变量面板填入，QD 会按账号加密存储。请勿把填好凭据的模板/任务导出分享。
+- **`password` 属敏感信息。** 账号密码型模板（如 `linkai-signin.json`）每次运行都会向站点**明文回传账号密码**。请确保你的 QD 实例只有自己能访问。
+- **优先 token 方案。** 若站点提供长期有效的 token / API Key，建议改用「token 直填」：删掉账号密码登录步骤，直接把抓到的 `Bearer` token 作为变量填到签到步骤，避免反复回传密码（注意 token 可能过期，需定期更新）。
+- **Cookie 同样敏感。** Cookie 型模板（NodeSeek、恩山）填入的是登录态 Cookie，等价于账号登录凭证，请妥善保管、勿外泄。
