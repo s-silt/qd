@@ -6,7 +6,9 @@
 # Created on 2014-08-01 10:35:08
 # pylint: disable=broad-exception-raised
 
+import asyncio
 import json
+import os
 import re
 import time
 from io import BytesIO
@@ -529,7 +531,12 @@ async def _analyze_har_with_ai(har: dict, hint: str) -> dict:
     client = ai_client.AIClient()
     if not client.enabled:
         raise ai_client.AIClientError("AI_API_KEY 未配置")
-    slim = ai_client.preprocess_har(har, config.ai_max_har_entries)
+    # preprocess_har 对大 HAR 是 CPU 密集 (深度遍历 + 截断 + 序列化), 同步执行会阻塞
+    # IOLoop, 拖延正在跑的签到。放到线程池里执行, 让事件循环保持可调度。
+    loop = asyncio.get_running_loop()
+    slim = await loop.run_in_executor(
+        None, ai_client.preprocess_har, har, config.ai_max_har_entries
+    )
     if not slim:
         raise ai_client.AIClientError("HAR 中未找到可分析的请求（可能均被过滤）")
     messages = ai_client.build_messages(slim, hint=hint)
@@ -540,6 +547,11 @@ async def _analyze_har_with_ai(har: dict, hint: str) -> dict:
         "har": ai_client.ai_result_to_har(result),
         "stats": {"input_entries": len(slim)},
     }
+
+
+# 上传 HAR 的字节上限 (默认 50MB)。超过即拒绝, 避免 json.loads / 预处理在 IOLoop 上
+# 吃满 CPU/内存、拖垮整个事件循环 (从而延误签到)。可经环境变量覆盖。
+HAR_UPLOAD_MAX_BYTES = int(os.getenv("AI_MAX_HAR_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 
 
 class HARAIAnalyze(BaseHandler):
@@ -567,8 +579,23 @@ class HARAIAnalyze(BaseHandler):
             )
             return
 
+        body = self.request.body or b"{}"
+        if len(body) > HAR_UPLOAD_MAX_BYTES:
+            self.set_status(413)
+            await self.finish(
+                {
+                    "ok": False,
+                    "error": str(
+                        ai_client.HARSizeLimitExceeded(HAR_UPLOAD_MAX_BYTES, len(body))
+                    ),
+                }
+            )
+            return
+
+        # json.loads 对几十 MB 的 body 是同步 CPU 操作, 放线程池避免阻塞 IOLoop。
+        loop = asyncio.get_running_loop()
         try:
-            payload = json.loads(self.request.body or b"{}")
+            payload = await loop.run_in_executor(None, json.loads, body)
         except json.JSONDecodeError as e:
             self.set_status(400)
             await self.finish({"ok": False, "error": f"请求体不是合法 JSON: {e}"})
