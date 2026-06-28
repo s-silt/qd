@@ -8,8 +8,9 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+import re
 import socket
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger("qd.playwright.security")
@@ -25,18 +26,52 @@ BLOCK_PRIVATE_IP = os.getenv("PLAYWRIGHT_BLOCK_PRIVATE_IP", "").lower() in (
 )
 
 
+# 仅由数字 / 十六进制 / 点组成的 host 可能是十进制 / 八进制 / 十六进制 / 短写
+# 的 IPv4 表示 (如 2130706433 / 0x7f000001 / 0177.0.0.1 / 127.1)。这些写法
+# ipaddress.ip_address() 不接受, 但 socket.inet_aton() (= libc inet_addr) 会
+# 解析, 攻击者借此绕过 SSRF 守卫直达 127.0.0.1 / 169.254.169.254。
+_NUMERIC_IPV4_RE = re.compile(r"^[0-9a-fA-FxX.]+$")
+
+
 def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
+    # IPv6 内可能内嵌 IPv4 (::ffff:127.0.0.1 映射 / 2002::/16 6to4),
+    # 先按内嵌的 IPv4 判一次, 防止经映射地址绕过环回 / 元数据拦截。
+    if isinstance(ip, ipaddress.IPv6Address):
+        for embedded in (ip.ipv4_mapped, ip.sixtofour):
+            if embedded is not None and _ip_is_blocked(embedded):
+                return True
     if (
-        ip.is_loopback
+        ip.is_loopback           # 127.0.0.0/8 全段 + ::1
         or ip.is_link_local      # 169.254.0.0/16 (云元数据) + fe80::/10
         or ip.is_multicast
         or ip.is_reserved
-        or ip.is_unspecified
+        or ip.is_unspecified     # 0.0.0.0 + ::
     ):
         return True
+    # 私网 (RFC1918 / IPv6 唯一本地 fc00::/7) 默认放行 (内网部署),
+    # 仅在显式收紧时拦截。
     if BLOCK_PRIVATE_IP and ip.is_private:
         return True
     return False
+
+
+def _parse_ip_literal(host: str) -> Optional[ipaddress._BaseAddress]:
+    """把 host 解析为 IP 对象, 覆盖十进制 / 八进制 / 十六进制 / 短写 IPv4 写法。
+
+    标准点分 / IPv6 字面量解析失败时, 对"看起来是数字 IP"的 host 再尝试
+    inet_aton, 以规范化绕过写法。普通域名不匹配数字字符集, 直接返回 None。
+    """
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    if _NUMERIC_IPV4_RE.match(host):
+        try:
+            packed = socket.inet_aton(host)
+            return ipaddress.ip_address(packed)
+        except OSError:
+            pass
+    return None
 
 
 def resolve_blocked_reason(host: str) -> str:
@@ -49,14 +84,12 @@ def resolve_blocked_reason(host: str) -> str:
         return "缺少 hostname"
     host = host.strip("[]")  # 去掉 IPv6 字面量方括号
 
-    # 1. 直接是 IP 字面量
-    try:
-        ip = ipaddress.ip_address(host)
+    # 1. 直接是 IP 字面量 (含十进制 / 八进制 / 十六进制 / 短写 IPv4 绕过写法)
+    ip = _parse_ip_literal(host)
+    if ip is not None:
         return "目标地址属于受限网段" if _ip_is_blocked(ip) else ""
-    except ValueError:
-        pass
 
-    # 2. 域名: 尽力解析所有 A/AAAA 记录, 任一落入受限段即拦截
+    # 2. 域名: 尽力解析所有 A/AAAA 记录, 任一落入受限段即拦截 (防 DNS rebinding)
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
@@ -71,6 +104,22 @@ def resolve_blocked_reason(host: str) -> str:
         if _ip_is_blocked(ip):
             return f"域名 {host} 解析到受限地址 {addr}"
     return ""
+
+
+def resolve_url_blocked_reason(url: str) -> str:
+    """给定完整 URL → 是否应拦截 + 原因 的统一入口 (供 fetcher/playwright/ocr 复用)。
+
+    从 URL 解析出 hostname 后委托给 resolve_blocked_reason; 解析不出 host
+    (如非法 URL / 缺少 scheme) 时按"缺少 hostname"拦截。
+    返回拦截原因字符串; 放行时返回空字符串。
+    """
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:
+        return "无法解析的 URL"
+    if not host:
+        return "缺少 hostname"
+    return resolve_blocked_reason(host)
 
 
 def parse_cookie_str_to_storage_state(cookie_str: str, url: str) -> Dict[str, Any]:
