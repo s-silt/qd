@@ -345,12 +345,12 @@ class UserManagerHandler(BaseHandler):
         flg = self.get_argument("flg", '')
         title = self.get_argument("title", '')
         log = self.get_argument("log", '')
-        adminflg = False
         users = []
-        user = await self.db.user.get(userid, fields=('role',))
-        if user and user['role'] == "admin":
-            adminflg = True
-            users = []
+        # 管理员判定必须基于当前登录用户 (self.current_user), 不能信任 URL 中的 userid,
+        # 否则任意已登录用户访问 /user/<adminid>/manage 即可拖走全量邮箱/IP。
+        current = self.current_user
+        adminflg = bool(current and current.get('isadmin'))
+        if adminflg:
             for user in await self.db.user.list(fields=('id', 'status', 'role', 'ctime', 'email', 'atime', 'email_verified', 'aip')):
                 if user['email_verified'] == 0:
                     user['email_verified'] = False

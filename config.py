@@ -12,7 +12,7 @@ import hashlib
 import os
 from urllib.parse import parse_qs, urlparse
 
-from libs.config_utils import strtobool
+from libs.config_utils import resolve_persistent_key, strtobool
 
 # QD 框架常用设置
 debug = bool(strtobool(os.getenv("QD_DEBUG", "False")))  # 是否启用 QD 框架 Debug
@@ -53,13 +53,26 @@ cookie_secure_mode = bool(
 # 启用后仅支持通过 HTTPS 访问 QD 框架, 请确保已正确配置 HTTPS 及证书
 # HTTP 访问将导致 Cookie 无法正常设置, 无法登录和使用框架功能
 
-cookie_secret = hashlib.sha256(
-    os.getenv("COOKIE_SECRET", "binux").encode("utf-8")
-).digest()  # Cookie 加密密钥, 强烈建议修改
+# Cookie/AES 密钥: 未显式设置时按"安全默认 + 不破坏已有数据"策略解析
+# (已有数据库 -> 沿用旧默认密钥并持久化以保数据; 全新部署 -> 随机密钥)。详见
+# libs.config_utils.resolve_persistent_key。
+_config_dir = os.path.join(os.path.dirname(__file__), "config")
+_data_exists = (os.getenv("DB_TYPE", "sqlite3") != "sqlite3") or os.path.exists(
+    os.path.join(_config_dir, "database.db")
+)
+cookie_secret = resolve_persistent_key(
+    env_value=os.getenv("COOKIE_SECRET"),
+    persist_path=os.path.join(_config_dir, ".cookie_secret"),
+    legacy_seed="binux",
+    data_exists=_data_exists,
+)  # Cookie 加密密钥
 pbkdf2_iterations = int(os.getenv("PBKDF2_ITERATIONS", "600000"))  # OWASP recommendation for PBKDF2-SHA256
-aes_key = hashlib.sha256(
-    os.getenv("AES_KEY", "binux").encode("utf-8")
-).digest()  # AES 加密密钥, 强烈建议修改
+aes_key = resolve_persistent_key(
+    env_value=os.getenv("AES_KEY"),
+    persist_path=os.path.join(_config_dir, ".aes_key"),
+    legacy_seed="binux",
+    data_exists=_data_exists,
+)  # AES 加密密钥
 
 # 数据库设置
 ## 数据库类型, 修改 sqlite3 为 mysql 使用 mysql
@@ -307,6 +320,14 @@ notepad_limit = int(
 )  # 单个用户拥有记事本最大数量, 默认为 20
 
 # DdddOCR 设置
+# 是否启用验证码 OCR(ddddocr)。默认【开启】以保持原行为, 不简单关掉本机可用的 OCR。
+# 在缺少 AVX/AVX2 指令集的 CPU 上, onnxruntime 加载模型会直接触发 SIGILL(Illegal
+# instruction, core dumped)——这是原生崩溃, Python try/except 拦不住。为此首次取用 OCR 时
+# 会用【子进程】探测 onnxruntime 能否真正加载/推理(见 web/handlers/util.py
+# _probe_onnxruntime_available): 子进程即便 SIGILL 也只杀子进程, 主进程据此【自动降级禁用】
+# 并告警。这样无 AVX 的老机自动关、可用机正常用, 无需人工干预。
+# 仍可显式设 ENABLE_DDDDOCR=false 完全跳过(连探测子进程都不起)。
+enable_ddddocr = bool(strtobool(os.getenv("ENABLE_DDDDOCR", "True")))
 extra_onnx_name = os.getenv("EXTRA_ONNX_NAME", "").split(
     "|"
 )  # config 目录下自定义 ONNX 文件名(不含 ".onnx" 后缀), 多个onnx文件名用"|"分隔

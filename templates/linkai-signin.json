@@ -1,6 +1,6 @@
 [
   {
-    "comment": "第1步：用账号密码登录 LinkAI，提取 token。需要变量 username / password。",
+    "comment": "第1步：用账号密码登录 LinkAI，提取 token。需要变量 username / password（仅占位符，请勿在模板里写死真实凭据）。注意：本步每次运行都会向站点明文回传账号密码；password 属敏感信息，QD 会按账号加密存储变量，但请勿导出/分享填好密码的模板或任务。若站点支持长期 token / API Key，建议改用 token 直填方案（删掉本步，直接把 Bearer token 作为变量填到第2步），避免反复回传密码。",
     "request": {
       "method": "POST",
       "url": "https://link-ai.tech/api/login",
@@ -43,10 +43,10 @@
     },
     "rule": {
       "success_asserts": [
-        {"re": "签到成功|已签到|已经签到|今日已|重复签到|\"code\"\\s*:\\s*200|\"success\"\\s*:\\s*true", "from": "content"}
+        {"re": "签到成功|已签到|已经签到|今日已|重复签到", "from": "content"}
       ],
       "failed_asserts": [
-        {"re": "未登录|登录已失效|登录失效|请重新登录|令牌|token 失效|未授权|无权限|unauthorized|<!DOCTYPE html", "from": "content"}
+        {"re": "未登录|登录已失效|登录失效|请重新登录|令牌|token 失效|未授权|无权限|unauthorized|签到失败|频繁|上限|<!DOCTYPE html", "from": "content"}
       ],
       "extract_variables": [
         {"name": "__log__", "re": "\"message\"\\s*:\\s*\"([^\"]*)\"", "from": "content"}
