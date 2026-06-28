@@ -856,10 +856,47 @@ class DdddOcrServer:
         return self.slide.slide_match(imgtarget, imgbg, simple_target=True)
 
 
-if ddddocr:
-    DDDDOCR_SERVER: Optional[DdddOcrServer] = DdddOcrServer()
-else:
-    DDDDOCR_SERVER = None
+# OCR 服务采用【惰性初始化】: 启动 import 阶段【不】加载 onnx 模型。
+#
+# 背景: 之前这里在模块 import 时就 `DdddOcrServer()`, 而其 __init__ 会同步加载
+# 4 个 onnx 模型。onnxruntime 在缺少 AVX/AVX2 指令集的 CPU 上加载模型会直接触发
+# SIGILL(Illegal instruction, core dumped)——这是原生崩溃, Python 的 try/except
+# 根本拦不住, 会让整个进程在启动 import 阶段就死掉; 配合 docker `restart: unless-stopped`
+# 表现为容器秒退 / 反复重启(本仓库 fork 启用 ddddocr 后即出现此现象)。
+#
+# 改造后:
+#   1. 启动不再触碰 onnxruntime, 容器总能正常起来;
+#   2. 首次真正用到 OCR 时才构建, 并用 try/except 兜住【Python 级】失败(模型文件缺失、
+#      onnxruntime 抛异常等)→ 降级为「OCR 不可用」而非拖垮整个服务;
+#   3. 对连"用一次都会 SIGILL"的老 CPU, 可设 ENABLE_DDDDOCR=false 彻底禁用, 永不加载模型。
+_ddddocr_singleton: Optional[DdddOcrServer] = None
+_ddddocr_init_failed = False
+
+
+def get_ddddocr_server() -> Optional[DdddOcrServer]:
+    """惰性获取 DdddOcrServer 单例。不可用时返回 None(调用方据此回落 HTTP 406)。
+
+    线程安全性: Tornado 单线程事件循环内调用, 无需加锁。
+    """
+    global _ddddocr_singleton, _ddddocr_init_failed
+    if _ddddocr_singleton is not None:
+        return _ddddocr_singleton
+    if (
+        _ddddocr_init_failed
+        or not config.enable_ddddocr
+        or ddddocr is None
+        or not hasattr(ddddocr, "DdddOcr")
+    ):
+        return None
+    try:
+        _ddddocr_singleton = DdddOcrServer()
+    except Exception as e:  # noqa: BLE001 - 任何 Python 级初始化失败都应降级, 不能拖垮服务
+        _ddddocr_init_failed = True
+        logger_web_util.warning(
+            "DdddOCR 初始化失败, 已禁用验证码 OCR 功能(不影响框架其它功能): %s", e
+        )
+        return None
+    return _ddddocr_singleton
 
 
 async def get_img_from_url(imgurl):
@@ -897,13 +934,13 @@ class DdddOcrHandler(BaseHandler):
     async def get(self):
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
+            if get_ddddocr_server():
                 img = self.get_argument("img", "")
                 imgurl = self.get_argument("imgurl", "")
                 old = bool(strtobool(self.get_argument("old", "False")))
                 extra_onnx_name = self.get_argument("extra_onnx_name", "")
                 img = await get_img(img, imgurl)
-                rtv["Result"] = DDDDOCR_SERVER.classification(
+                rtv["Result"] = get_ddddocr_server().classification(
                     img, old=old, extra_onnx_name=extra_onnx_name
                 )
                 rtv["状态"] = "OK"
@@ -919,7 +956,7 @@ class DdddOcrHandler(BaseHandler):
     async def post(self):
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
+            if get_ddddocr_server():
                 if self.request.headers.get("Content-Type", "").startswith(
                     "application/json"
                 ):
@@ -935,7 +972,7 @@ class DdddOcrHandler(BaseHandler):
                     extra_onnx_name = self.get_argument("extra_onnx_name", "")
 
                 img = await get_img(img, imgurl)
-                rtv["Result"] = DDDDOCR_SERVER.classification(
+                rtv["Result"] = get_ddddocr_server().classification(
                     img, old=old, extra_onnx_name=extra_onnx_name
                 )
                 rtv["状态"] = "OK"
@@ -953,11 +990,11 @@ class DdddDetHandler(BaseHandler):
     async def get(self):
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
+            if get_ddddocr_server():
                 img = self.get_argument("img", "")
                 imgurl = self.get_argument("imgurl", "")
                 img = await get_img(img, imgurl)
-                rtv["Result"] = DDDDOCR_SERVER.detection(img)
+                rtv["Result"] = get_ddddocr_server().detection(img)
                 rtv["状态"] = "OK"
             else:
                 raise HTTPError(406)
@@ -971,7 +1008,7 @@ class DdddDetHandler(BaseHandler):
     async def post(self):
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
+            if get_ddddocr_server():
                 if self.request.headers.get("Content-Type", "").startswith(
                     "application/json"
                 ):
@@ -982,7 +1019,7 @@ class DdddDetHandler(BaseHandler):
                     img = self.get_argument("img", "")
                     imgurl = self.get_argument("imgurl", "")
                 img = await get_img(img, imgurl)
-                rtv["Result"] = DDDDOCR_SERVER.detection(img)
+                rtv["Result"] = get_ddddocr_server().detection(img)
                 rtv["状态"] = "OK"
             else:
                 raise Exception(404)
@@ -998,7 +1035,7 @@ class DdddSlideHandler(BaseHandler):
     async def get(self):
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
+            if get_ddddocr_server():
                 imgtarget = self.get_argument("imgtarget", "")
                 imgbg = self.get_argument("imgbg", "")
                 simple_target = bool(
@@ -1007,7 +1044,7 @@ class DdddSlideHandler(BaseHandler):
                 comparison = bool(strtobool(self.get_argument("comparison", "False")))
                 imgtarget = await get_img(imgtarget, "")
                 imgbg = await get_img(imgbg, "")
-                rtv["Result"] = DDDDOCR_SERVER.slide_match(
+                rtv["Result"] = get_ddddocr_server().slide_match(
                     imgtarget, imgbg, comparison=comparison, simple_target=simple_target
                 )
                 rtv["状态"] = "OK"
@@ -1023,7 +1060,7 @@ class DdddSlideHandler(BaseHandler):
     async def post(self):
         rtv = {}
         try:
-            if DDDDOCR_SERVER:
+            if get_ddddocr_server():
                 if self.request.headers.get("Content-Type", "").startswith(
                     "application/json"
                 ):
@@ -1046,7 +1083,7 @@ class DdddSlideHandler(BaseHandler):
 
                 imgtarget = await get_img(imgtarget, "")
                 imgbg = await get_img(imgbg, "")
-                rtv["Result"] = DDDDOCR_SERVER.slide_match(
+                rtv["Result"] = get_ddddocr_server().slide_match(
                     imgtarget, imgbg, comparison=comparison, simple_target=simple_target
                 )
                 rtv["状态"] = "OK"
