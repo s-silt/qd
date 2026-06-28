@@ -8,6 +8,7 @@
 
 import base64
 import json
+import os
 import random
 import re
 import time
@@ -27,6 +28,7 @@ from libs import cookie_utils, utils
 from libs.log import Log
 from libs.parse_url import parse_url
 from libs.safe_eval import safe_eval
+from libs.security import resolve_blocked_reason
 
 logger_fetcher = Log("QD.Http.Fetcher").getlogger()
 if config.use_pycurl:
@@ -43,6 +45,25 @@ else:
     pycurl = None  # pylint: disable=invalid-name
 local_host = f"http://{config.bind}:{config.port}".replace("0.0.0.0", "localhost")
 NOT_RETRY_CODE = config.not_retry_code
+
+
+def _env_bool(name, default):
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+# [D #7] TLS 证书校验默认开启 (安全默认)。
+# 兼容开关优先级: config.validate_cert > 环境变量 QD_VALIDATE_CERT > 默认 True。
+# 模板可在 request 中显式设置 validate_cert=False, 仅对自签名站点放开。
+DEFAULT_VALIDATE_CERT = getattr(config, "validate_cert", None)
+if DEFAULT_VALIDATE_CERT is None:
+    DEFAULT_VALIDATE_CERT = _env_bool("QD_VALIDATE_CERT", True)
+DEFAULT_VALIDATE_CERT = bool(DEFAULT_VALIDATE_CERT)
+
+# [D #38] _proxy 注入防护: 仅允许的代理 scheme 白名单。
+ALLOWED_PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
 
 
 class Fetcher(object):
@@ -105,12 +126,22 @@ class Fetcher(object):
         proxy=None,
         curl_encoding=True,
         curl_content_length=True,
+        validate_cert=None,
     ):
         if proxy is None:
             proxy = {}
         env = obj["env"]
         rule = obj["rule"]
         request = self.render(obj["request"], env["variables"], env["session"])
+
+        # [D #7] 解析证书校验开关: 显式入参 > 模板 request 级 > 全局默认。
+        if validate_cert is None:
+            validate_cert = request.get("validate_cert")
+        if validate_cert is None:
+            validate_cert = obj.get("request", {}).get("validate_cert")
+        if validate_cert is None:
+            validate_cert = DEFAULT_VALIDATE_CERT
+        validate_cert = bool(validate_cert)
 
         method = request["method"]
         url = request["url"]
@@ -178,7 +209,7 @@ class Fetcher(object):
             allow_nonstandard_methods=True,
             allow_ipv6=True,
             prepare_curl_callback=set_curl_callback,
-            validate_cert=False,
+            validate_cert=validate_cert,
             connect_timeout=connect_timeout,
             request_timeout=request_timeout,
         )
@@ -333,11 +364,19 @@ class Fetcher(object):
             if _from == "content":
                 if content[0] == -1:
                     if response.headers and isinstance(response.headers, HTTPHeaders):
-                        content[0] = utils.decode(
+                        decoded = utils.decode(
                             response.body, headers=response.headers
                         )
                     else:
-                        content[0] = utils.decode(response.body)
+                        decoded = utils.decode(response.body)
+                    # [P1 #35] 非法 charset 等导致 decode 返回 None 时回退,
+                    # 避免后续 re.search(None) 抛 TypeError 被误判为请求失败。
+                    if decoded is None:
+                        try:
+                            decoded = (response.body or b"").decode("latin-1", "replace")
+                        except Exception:
+                            decoded = ""
+                    content[0] = decoded
                 if "content-type" in response.headers:
                     if "image" in response.headers.get("content-type"):
                         return base64.b64encode(response.body).decode("utf8")
@@ -376,6 +415,8 @@ class Fetcher(object):
                     )
             else:
                 return ""
+            # 兜底: 任何分支都不应返回 None, 否则 re.search 会抛 TypeError。
+            return ""
 
         session = env["session"]
         if isinstance(session, cookie_utils.CookieSession):
@@ -396,20 +437,82 @@ class Fetcher(object):
                 log_error = f"The error occurred when rendering template {key}: {obj[key]} \\r\\n {repr(e)}"
                 raise httpclient.HTTPError(500, log_error)
 
-        for r in rule.get("success_asserts") or "":
+        def _eval_assert(r):
+            # 渲染并安全求值单条断言, 永不抛异常 ([P1 #35])。
             _render(r, "re")
-            if r["re"] and re.search(r["re"], getdata(r["from"])):
-                msg = ""
-                break
-            else:
-                msg = f"Fail assert: {json.dumps(r, ensure_ascii=False)} from success_asserts"
+            if not r.get("re"):
+                return False
+            try:
+                data = getdata(r.get("from"))
+                if data is None:
+                    data = ""
+                return bool(re.search(r["re"], data))
+            except Exception as e:
+                logger_fetcher.error(
+                    "Run rule assert failed: %s",
+                    str(e),
+                    exc_info=config.traceback_print,
+                )
+                return False
+
+        # [A] 成功断言判定:
+        # - content 类断言之间维持 OR (任一命中即视为内容成功);
+        # - status 类断言只能作前置条件, 不能独立构成成功;
+        # - 二者同时存在时取 AND (status 命中后仍需 content 成功断言)。
+        success_asserts = rule.get("success_asserts") or []
+        content_asserts = [r for r in success_asserts if r.get("from") != "status"]
+        status_asserts = [r for r in success_asserts if r.get("from") == "status"]
+
+        content_ok = None
+        if content_asserts:
+            content_ok = any(_eval_assert(r) for r in content_asserts)
+        status_ok = None
+        if status_asserts:
+            status_ok = any(_eval_assert(r) for r in status_asserts)
+
+        if content_asserts and status_asserts:
+            success_by_assert = bool(content_ok and status_ok)
+        elif content_asserts:
+            success_by_assert = bool(content_ok)
+        elif status_asserts:
+            success_by_assert = bool(status_ok)
         else:
-            if rule.get("success_asserts"):
-                success = False
+            success_by_assert = None  # 未配置成功断言, 无明确成功证据
+
+        if success_by_assert is True:
+            success = True
+            msg = ""
+        elif success_by_assert is False:
+            success = False
+            if content_asserts and not content_ok:
+                failed_item = content_asserts[0]
+            elif status_asserts and not status_ok:
+                failed_item = status_asserts[0]
+            else:
+                failed_item = success_asserts[0] if success_asserts else None
+            if failed_item is not None:
+                msg = f"Fail assert: {json.dumps(failed_item, ensure_ascii=False)} from success_asserts"
+            else:
+                msg = "Fail assert from success_asserts"
+
+        # [A] 错误响应强制判失败: 当响应为传输错误或 status>=400, 且无明确成功断言
+        # 命中时, 不得默认成功 (旧逻辑 success 初值 True 会误判)。
+        # 注意: tornado 对 3xx 重定向也会设置 response.error, 此处用 code 区分,
+        # 避免误杀依赖 302 的登录类模板。
+        _code = response.code or 0
+        response_failed = _code >= 400 or (
+            response.error is not None and not (300 <= _code < 400)
+        )
+        if response_failed and success_by_assert is not True:
+            success = False
+            if not msg:
+                msg = (
+                    f"Response failed without matching success assert "
+                    f"(code={response.code}, error={response.error or response.reason})"
+                )
 
         for r in rule.get("failed_asserts") or "":
-            _render(r, "re")
-            if r["re"] and re.search(r["re"], getdata(r["from"])):
+            if _eval_assert(r):
                 success = False
                 msg = f"Fail assert: {json.dumps(r, ensure_ascii=False)} from failed_asserts"
                 break
@@ -617,9 +720,14 @@ class Fetcher(object):
                             client = simple_httpclient.SimpleAsyncHTTPClient()
                             e.response = await client.fetch(req)
                         except Exception as e0:
+                            # [P2 #37] e.response 是 HTTPResponse 对象, 不能直接 .replace,
+                            # 否则 AttributeError 会被外层 finally 吞掉而丢失诊断日志; 先 str()。
                             logger_fetcher.error(
-                                e.message.replace("\\r\\n", "\r\n")
-                                or e.response.replace("\\r\\n", "\r\n")
+                                (e.message and str(e.message).replace("\\r\\n", "\r\n"))
+                                or (
+                                    e.response
+                                    and str(e.response).replace("\\r\\n", "\r\n")
+                                )
                                 or e0,
                                 exc_info=config.traceback_print,
                             )
@@ -629,9 +737,14 @@ class Fetcher(object):
                                 "%s %s [Warning] %s", req.method, req.url, e
                             )
                         except Exception as e0:
+                            # [P2 #37] e.response 是 HTTPResponse 对象, 不能直接 .replace,
+                            # 否则 AttributeError 会被外层 finally 吞掉而丢失诊断日志; 先 str()。
                             logger_fetcher.error(
-                                e.message.replace("\\r\\n", "\r\n")
-                                or e.response.replace("\\r\\n", "\r\n")
+                                (e.message and str(e.message).replace("\\r\\n", "\r\n"))
+                                or (
+                                    e.response
+                                    and str(e.response).replace("\\r\\n", "\r\n")
+                                )
                                 or e0,
                                 exc_info=config.traceback_print,
                             )
@@ -987,7 +1100,21 @@ class Fetcher(object):
                     current_proxy = env["variables"].get("_proxy", "")
                     if current_proxy:
                         parsed_proxy = parse_url(current_proxy)
-                        if parsed_proxy:
+                        # [D #38] _proxy 可由上游响应正则提取注入, 必须做
+                        # scheme 白名单 + 内网/受限地址拦截, 防止把带 cookie 的
+                        # 签到流量导向攻击者控制的代理。复用 security 的 SSRF 守卫。
+                        blocked_reason = ""
+                        if not parsed_proxy:
+                            blocked_reason = "无法解析的代理地址"
+                        else:
+                            scheme = (parsed_proxy.get("scheme") or "").lower()
+                            if scheme not in ALLOWED_PROXY_SCHEMES:
+                                blocked_reason = f"不允许的代理 scheme: {scheme or '(空)'}"
+                            else:
+                                blocked_reason = resolve_blocked_reason(
+                                    parsed_proxy.get("host") or ""
+                                )
+                        if parsed_proxy and not blocked_reason:
                             # 更新当前使用的代理设置
                             proxy = {
                                 "scheme": parsed_proxy["scheme"],
@@ -997,10 +1124,11 @@ class Fetcher(object):
                                 "password": parsed_proxy["password"],
                             }
                         else:
-                            # 如果 _proxy 无效或被设置为空，则清除代理
+                            # _proxy 无效 / scheme 非法 / 指向受限地址, 拒绝使用并清除
                             logger_fetcher.warning(
-                                "Invalid _proxy value: %s, clearing proxy at %d/%d request.",
+                                "Rejected _proxy value: %s (%s), clearing proxy at %d/%d request.",
                                 current_proxy,
+                                blocked_reason or "invalid",
                                 entry["idx"],
                                 tpl_length,
                             )
