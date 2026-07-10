@@ -52,6 +52,46 @@ class TestUtils(unittest.TestCase):
         result = varbinary2ip(binary)
         self.assertEqual(result, ip)
 
+    def test_get_encodings_from_content_bytes(self):
+        """bytes 页面里的 <meta charset> 应被读取到。
+
+        旧实现用 str 正则匹配 bytes 恒抛 TypeError -> 在 find_encoding 里被吞并回退 utf-8,
+        GBK 等站点在 charset_normalizer 失手时会被解成乱码, 令中文成功/失败断言失灵。
+        """
+        from libs._utils.jinja_filters import get_encodings_from_content
+        html = '<html><head><meta charset="gb2312"></head></html>'.encode("latin-1")
+        encs = [e.lower() for e in get_encodings_from_content(html)]
+        self.assertIn("gb2312", encs)
+
+    def test_find_encoding_always_returns_valid_codec(self):
+        """find_encoding 绝不能返回非法 codec 名, 否则 decode() 会 LookupError -> 返回 None。
+
+        get_encodings_from_content 的正则可能抓到 '"'(空 charset)或 og:url 里的垃圾串;
+        find_encoding 必须用 codecs.lookup 过滤掉, 保证返回值恒可 decode。
+        """
+        import codecs
+        from libs._utils.jinja_filters import find_encoding
+        samples = [
+            b'<meta charset="">rubbish\xff\xfe',   # 空 charset -> 提取到 '"'
+            b'<meta property="og:url" content="http://x?charset=foo">\xff', # 垃圾 charset
+            b'<meta charset="gb2312">\xd6\xd0\xce\xc4',
+            b'\xff\xfe\x00 binary',
+            b'plain ascii',
+        ]
+        for body in samples:
+            enc = find_encoding(body, headers=None)
+            codecs.lookup(enc)  # 不得抛 LookupError
+
+    def test_find_encoding_invalid_header_charset_discarded(self):
+        """Codex#5: 非法的响应头 charset(如 x-gbk)应被丢弃, 让位给探测/页面内 <meta>,
+        而非原样返回导致 decode() -> None。"""
+        import codecs
+        from libs._utils.jinja_filters import find_encoding
+        body = '<meta charset="gb2312">中文签到成功'.encode('gb2312')
+        enc = find_encoding(body, headers={"Content-Type": "text/html; charset=invalid-codec-xyz"})
+        codecs.lookup(enc)  # 返回值必为合法 codec
+        self.assertNotEqual(enc.lower(), "invalid-codec-xyz")
+
 
 if __name__ == "__main__":
     unittest.main()

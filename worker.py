@@ -7,6 +7,7 @@
 import asyncio
 import datetime
 import json
+import random
 import re
 import time
 import traceback
@@ -211,11 +212,20 @@ class BaseWorker:
             'timeout', 'timed out', 'connection', 'reset by peer', 'temporarily',
             'temporary', 'too many requests', 'bad gateway', 'service unavailable',
             'gateway timeout', 'cannot connect', 'connect call failed', 'unreachable',
+            # 中文站点常在 HTTP 200 正文里返回瞬时业务错误(签到接口 code!=0), 这些也应重试,
+            # 而非当成永久失败在 8 次退避后禁用一个其实健康的每日签到任务。
+            # 注意: 只收录"明确指向服务器繁忙/限流"的短语; 刻意不收 "请稍后再试"/"稍后重试" 这类
+            # 泛化后缀 —— 它们同样常挂在永久失败上(如 "密码错误, 请稍后再试"), 会把永久失败误判为
+            # 瞬时→无限重试永不禁用(Codex#2)。
+            '系统繁忙', '服务繁忙', '服务器繁忙', '操作频繁', '过于频繁',
+            '访问频繁', '请求频繁', '网络异常', '当前访问人数较多',
         )
         if any(k in msg for k in keywords):
             return True
-        # HTTP 5xx / 429 status codes
-        if re.search(r'\b(429|5\d\d)\b', msg):
+        # HTTP 5xx / 429 状态码: 必须带 code=/status/http/错误码 上下文才算瞬时, 避免把渲染进
+        # 异常文本的 Request URL 或响应体里恰好出现的三位数字(如 ?score=500 / "amount":530)
+        # 误判为瞬时错误 -> effective_retry_count=-1 无限重试、永不自动禁用(掩盖真正的永久失败)。
+        if re.search(r'(?:\bcode\b|\bstatus\b|\bhttp\b|错误码|状态码)[\s:=/]*(?:429|5\d\d)\b', msg):
             return True
         return False
 
@@ -268,12 +278,19 @@ class BaseWorker:
         elif effective_retry_count == 0:
             next = None
 
-        if next and not retry_interval:
-            if interval is None:
-                interval = 12 * 60 * 60
-            next = min(next, interval)
-            # 退避下限, 防止短 interval 把退避压平到几秒钟 (#24)
-            next = max(next, BaseWorker.MIN_BACKOFF)
+        if next:
+            if not retry_interval:
+                if interval is None:
+                    interval = 12 * 60 * 60
+                next = min(next, interval)
+                # 退避下限, 防止短 interval 把退避压平到几秒钟 (#24)
+                next = max(next, BaseWorker.MIN_BACKOFF)
+            elif is_temporary:
+                # 用户自定义 retry_interval 一般原样尊重(见 test_backoff_floor_not_applied_to_
+                # explicit_retry_interval)。但当错误被判为瞬时时 effective_retry_count 已被置为 -1
+                # (无限重试), 极小的 retry_interval(如 5s) 会退化成"几秒一次、永不停"的自伤循环 ——
+                # 唯独这个危险组合下强制 MIN_BACKOFF 下限。
+                next = max(next, BaseWorker.MIN_BACKOFF)
         return next
 
     @staticmethod
@@ -381,6 +398,7 @@ class BaseWorker:
         # ------------------------------------------------------------------ #
         if is_success:
             # --- 成功善后: 算下次时间 / 写成功日志 / 更新 task (独立事务) ---
+            next_committed = False
             try:
                 async with self.db.transaction() as sql_session:
                     variables = await self.db.user.encrypt(task['userid'], new_env['variables'], sql_session=sql_session)
@@ -397,6 +415,7 @@ class BaseWorker:
                                            mtime=time.time(),
                                            next=next,
                                            sql_session=sql_session)
+                next_committed = True  # 事务已成功提交, next 已落库
                 t = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 title = f"QD定时任务 {tpl['sitename']}-{task['note']} 成功"
                 content = new_env['variables'].get('__log__')
@@ -408,6 +427,10 @@ class BaseWorker:
                 # [B] 成功善后写库失败: 仅记日志, 不回退成功判定, 不写失败记录.
                 logger_worker.error('taskid:%s tplid:%s post-success bookkeeping failed: %s',
                                     task.get('id'), task.get('tplid'), e, exc_info=config.traceback_print)
+                # 兜底推进 next: 仅当事务未提交(next 未落库)才兜底; 若事务已提交、只是随后的
+                # 格式化/日志抛错, 正确的 next 已在库里, 绝不能用兜底覆盖(否则当天早重跑重复签到)。
+                if not next_committed:
+                    await self._safe_advance_next(task, tpl, success=True)
 
             # --- 清理旧日志: 独立事务, 失败只记日志, 不影响成功判定 ([B]) ---
             try:
@@ -421,6 +444,7 @@ class BaseWorker:
         else:
             # --- 失败善后: 计算退避 / 写失败日志 / 更新 task (独立事务) ---
             e = exec_error
+            next_committed = False
             try:
                 is_temporary = self._is_temporary_error(e)
                 next_time_delta = self.failed_count_to_time(
@@ -444,7 +468,9 @@ class BaseWorker:
                 else:
                     disabled = True
                     next = None
-                    content = " \\r\\n任务已禁用"
+                    # [reliability] 保留失败原因: 永久禁用是最需要"为什么"的告警, 旧实现直接用
+                    # "任务已禁用" 覆盖了含时间戳与错误详情的 content, 用户收到告警却无从下手。
+                    content = content + " \\r\\n任务已禁用(重试已耗尽), 请检查凭据/模板后手动启用"
                     should_push = 0x1
 
                 async with self.db.transaction() as sql_session:
@@ -457,6 +483,7 @@ class BaseWorker:
                                            mtime=time.time(),
                                            next=next,
                                            sql_session=sql_session)
+                next_committed = True  # 失败善后事务已提交(含 next/disabled), 下面抛错不再兜底覆盖
 
                 logger_worker.error('taskid:%s tplid:%s failed! %.4fs \r\n%s', task.get('id'), task.get('tplid'), time.perf_counter(
                 ) - start, str(e).replace('\\r\\n', '\r\n'))
@@ -464,6 +491,9 @@ class BaseWorker:
                 # 失败善后本身写库失败: 仅记日志, 不再抛出 (避免 next 不推进).
                 logger_worker.error('taskid:%s failure bookkeeping failed: %s',
                                     task.get('id'), e2, exc_info=config.traceback_print)
+                # 兜底推进 next: 仅当事务未提交才兜底(否则会把已写好的 disabled/next 覆盖掉)。
+                if not next_committed:
+                    await self._safe_advance_next(task, tpl, success=False)
 
         # ------------------------------------------------------------------ #
         # [#36] 观测层: 统计 / 推送. 各自独立 try, 在判定提交之后执行,
@@ -491,6 +521,39 @@ class BaseWorker:
                 logger_worker.error('taskid:%s push failed! %s', task.get('id'), str(e), exc_info=config.traceback_print)
         return is_success
 
+    async def _safe_advance_next(self, task, tpl, success):
+        """善后写库失败时, 尽力把 task.next 推到未来, 防止 producer ~500ms 紧抓重跑。
+
+        这是"判定与善后解耦"的补齐: 判定不回退没错, 但调度用的 next 恰恰也写在那个
+        可能失败的善后事务里。此处用一个只写 next 的最小独立事务兜底, 本身再失败也仅记
+        日志(此时 QueueWorker.runner 末尾的 check_task_loop 限速仍能避免 CPU 打满)。
+
+        成功任务用正常的成功调度(按天/interval)推进 —— 否则 interval-less(每日/cron)任务
+        会被短兜底提前到当天再签一次, 造成重复签到(Codex#1); 失败或算不出时退到 interval 或 24h。
+        """
+        try:
+            next_ts = None
+            if success:
+                try:
+                    next_ts = self._cal_success_next(task, tpl)
+                except Exception:
+                    next_ts = None
+            if not next_ts or next_ts <= time.time():
+                interval = tpl['interval'] if tpl else None
+                next_ts = time.time() + max(interval if interval else 24 * 60 * 60, BaseWorker.MIN_BACKOFF)
+            async with self.db.transaction() as sql_session:
+                await self.db.task.mod(
+                    task['id'],
+                    next=next_ts,
+                    mtime=time.time(),
+                    sql_session=sql_session,
+                )
+            logger_worker.warning('taskid:%s next advanced by fallback after bookkeeping failure',
+                                  task.get('id'))
+        except Exception as e:
+            logger_worker.error('taskid:%s safe advance next failed: %s',
+                                task.get('id'), e, exc_info=config.traceback_print)
+
     def _cal_success_next(self, task, tpl):
         """Compute the next run timestamp for a successful task.
 
@@ -513,11 +576,18 @@ class BaseWorker:
             next = self._interval_next(tpl)
         return next
 
+    # 调度抖动上限(秒): 打散"同一时刻创建/所有按天"的任务在同一秒集中触发的洪峰(thundering herd),
+    # 减少对同一站点/同一出口 IP 的瞬时并发, 降低踩限流与被判定为脚本批量的概率。
+    SCHEDULE_JITTER = 300
+
     @staticmethod
     def _interval_next(tpl):
         """Interval-based next run timestamp (mirrors the legacy success path)."""
         interval = tpl['interval'] if tpl else None
-        next = time.time() + max((interval if interval else 24 * 60 * 60), 1 * 60)
+        base = max((interval if interval else 24 * 60 * 60), 1 * 60)
+        # 正向抖动 [0, min(SCHEDULE_JITTER, base*10%)] 秒, 只推后不提前, 不影响"至少间隔 base"语义。
+        jitter = random.uniform(0, min(BaseWorker.SCHEDULE_JITTER, base * 0.1))
+        next = time.time() + base + jitter
         if interval is None:
             next = BaseWorker.fix_next_time(next)
         return next
