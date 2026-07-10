@@ -108,12 +108,13 @@ class Pusher:
                     ("企业微信webhook", qywx_webhook_send(notice['qywx_webhook'], title, content)),
                 ]
                 results = await gen.convert_yielded([c[1] for c in channels])
-                # [observability] 各 send2* 约定失败时返回 Exception(而非抛出); 旧实现丢弃返回值,
-                # 用户唯一启用的渠道挂了也毫无察觉。这里把失败渠道记 warning, 让"通知本身没送达"可见。
+                # [observability] 各 send2* 约定失败时返回 Exception 或字符串 "False"(键未配置/未发送);
+                # 被禁用渠道走 nonepush 返回 None(不告警)。旧实现丢弃返回值, 用户唯一启用的渠道挂了
+                # 也毫无察觉。这里把失败/未配置渠道记 warning, 让"通知本身没送达"可见(Codex#7)。
                 for (name, _), res in zip(channels, results):
-                    if isinstance(res, Exception):
+                    if isinstance(res, Exception) or res == "False":
                         logger_funcs.warning(
-                            "推送渠道 %s 发送失败(userid=%s): %s", name, userid, res
+                            "推送渠道 %s 发送失败或未配置(userid=%s): %s", name, userid, res
                         )
 
     async def send2bark(self, barklink, title, content):

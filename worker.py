@@ -214,8 +214,11 @@ class BaseWorker:
             'gateway timeout', 'cannot connect', 'connect call failed', 'unreachable',
             # 中文站点常在 HTTP 200 正文里返回瞬时业务错误(签到接口 code!=0), 这些也应重试,
             # 而非当成永久失败在 8 次退避后禁用一个其实健康的每日签到任务。
-            '系统繁忙', '服务繁忙', '服务器繁忙', '请稍后', '稍后再试', '稍后重试',
-            '操作频繁', '过于频繁', '访问频繁', '请求频繁', '网络异常', '当前访问人数较多',
+            # 注意: 只收录"明确指向服务器繁忙/限流"的短语; 刻意不收 "请稍后再试"/"稍后重试" 这类
+            # 泛化后缀 —— 它们同样常挂在永久失败上(如 "密码错误, 请稍后再试"), 会把永久失败误判为
+            # 瞬时→无限重试永不禁用(Codex#2)。
+            '系统繁忙', '服务繁忙', '服务器繁忙', '操作频繁', '过于频繁',
+            '访问频繁', '请求频繁', '网络异常', '当前访问人数较多',
         )
         if any(k in msg for k in keywords):
             return True
@@ -425,9 +428,9 @@ class BaseWorker:
                 logger_worker.error('taskid:%s tplid:%s post-success bookkeeping failed: %s',
                                     task.get('id'), task.get('tplid'), e, exc_info=config.traceback_print)
                 # 兜底推进 next: 仅当事务未提交(next 未落库)才兜底; 若事务已提交、只是随后的
-                # 格式化/日志抛错, 正确的 next 已在库里, 绝不能用短兜底覆盖(否则当天早重跑重复签到)。
+                # 格式化/日志抛错, 正确的 next 已在库里, 绝不能用兜底覆盖(否则当天早重跑重复签到)。
                 if not next_committed:
-                    await self._safe_advance_next(task, tpl)
+                    await self._safe_advance_next(task, tpl, success=True)
 
             # --- 清理旧日志: 独立事务, 失败只记日志, 不影响成功判定 ([B]) ---
             try:
@@ -490,7 +493,7 @@ class BaseWorker:
                                     task.get('id'), e2, exc_info=config.traceback_print)
                 # 兜底推进 next: 仅当事务未提交才兜底(否则会把已写好的 disabled/next 覆盖掉)。
                 if not next_committed:
-                    await self._safe_advance_next(task, tpl)
+                    await self._safe_advance_next(task, tpl, success=False)
 
         # ------------------------------------------------------------------ #
         # [#36] 观测层: 统计 / 推送. 各自独立 try, 在判定提交之后执行,
@@ -518,25 +521,35 @@ class BaseWorker:
                 logger_worker.error('taskid:%s push failed! %s', task.get('id'), str(e), exc_info=config.traceback_print)
         return is_success
 
-    async def _safe_advance_next(self, task, tpl):
+    async def _safe_advance_next(self, task, tpl, success):
         """善后写库失败时, 尽力把 task.next 推到未来, 防止 producer ~500ms 紧抓重跑。
 
         这是"判定与善后解耦"的补齐: 判定不回退没错, 但调度用的 next 恰恰也写在那个
         可能失败的善后事务里。此处用一个只写 next 的最小独立事务兜底, 本身再失败也仅记
         日志(此时 QueueWorker.runner 末尾的 check_task_loop 限速仍能避免 CPU 打满)。
+
+        成功任务用正常的成功调度(按天/interval)推进 —— 否则 interval-less(每日/cron)任务
+        会被短兜底提前到当天再签一次, 造成重复签到(Codex#1); 失败或算不出时退到 interval 或 24h。
         """
         try:
-            interval = tpl['interval'] if tpl else None
-            fallback = max(interval if interval else 3600, BaseWorker.MIN_BACKOFF)
+            next_ts = None
+            if success:
+                try:
+                    next_ts = self._cal_success_next(task, tpl)
+                except Exception:
+                    next_ts = None
+            if not next_ts or next_ts <= time.time():
+                interval = tpl['interval'] if tpl else None
+                next_ts = time.time() + max(interval if interval else 24 * 60 * 60, BaseWorker.MIN_BACKOFF)
             async with self.db.transaction() as sql_session:
                 await self.db.task.mod(
                     task['id'],
-                    next=time.time() + fallback,
+                    next=next_ts,
                     mtime=time.time(),
                     sql_session=sql_session,
                 )
-            logger_worker.warning('taskid:%s next advanced by fallback (+%ss) after bookkeeping failure',
-                                  task.get('id'), fallback)
+            logger_worker.warning('taskid:%s next advanced by fallback after bookkeeping failure',
+                                  task.get('id'))
         except Exception as e:
             logger_worker.error('taskid:%s safe advance next failed: %s',
                                 task.get('id'), e, exc_info=config.traceback_print)

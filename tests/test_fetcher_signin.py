@@ -151,6 +151,26 @@ def test_failed_assert_triggers_failure():
 # ---------------------------------------------------------------------------
 
 
+def test_failed_assert_bad_jinja_fails_closed():
+    """Codex#3: 失败断言里 Jinja 报错 -> fail-closed 判失败, 不放过登录页(不误报成功)。"""
+    f = Fetcher()
+    resp = make_response("请先登录".encode("utf-8"), code=200)  # 过期登录页, 无成功断言
+    rule = {"failed_asserts": [{"re": "{{ 1 // 0 }}", "from": "content"}]}
+    success, _ = f.run_rule(resp, rule, base_env())
+    assert success is False
+
+
+def test_failed_assert_templated_transient_shows_rendered_in_msg():
+    """Codex#4: 模板化失败断言命中后, 失败消息应含渲染后的文本(供瞬时错误分类识别)。"""
+    f = Fetcher()
+    env = {"session": [], "variables": {"err": "service unavailable"}}
+    resp = make_response(b"service unavailable", code=200)
+    rule = {"failed_asserts": [{"re": "{{ err }}", "from": "content"}]}
+    success, msg = f.run_rule(resp, rule, env)
+    assert success is False
+    assert "service unavailable" in msg  # 渲染值进入消息, 而非原始 {{ err }}
+
+
 def test_eval_assert_bad_jinja_does_not_raise():
     """成功断言 re 里的 Jinja 报错必须被兜住(永不抛), 不能逃逸 run_rule。
 
@@ -222,6 +242,15 @@ async def test_zero_request_top_level_fails(monkeypatch):
     env = {"variables": {}, "session": []}  # items 未定义 -> 空可迭代 -> 循环体 0 次
     with pytest.raises(Exception):
         await f.do_fetch(tpl, env, proxies=[], request_limit=50)
+
+
+@pytest.mark.asyncio
+async def test_empty_template_fails_when_guard_on(monkeypatch):
+    """Codex#6: 空模板 tpl=[] 也算零请求空跑, 守卫开启时判失败(旧条件 len>0 漏掉了它)。"""
+    f = Fetcher()
+    monkeypatch.setattr(fetcher_mod.config, "fail_on_zero_request", True)
+    with pytest.raises(Exception):
+        await f.do_fetch([], {"variables": {}, "session": []}, proxies=[], request_limit=10)
 
 
 # ---------------------------------------------------------------------------
