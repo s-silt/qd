@@ -79,7 +79,7 @@ class Pusher:
             def nonepush(*args, **kwargs):  # pylint: disable=unused-argument
                 return
 
-            if pushsw['pushen']:
+            if pushsw.get('pushen'):
                 send2bark = self.send2bark if (pusher["barksw"]) else nonepush
                 send2s = self.send2s if (pusher["schansw"]) else nonepush
                 send2wxpusher = self.send2wxpusher if (
@@ -96,24 +96,26 @@ class Pusher:
                 qywx_webhook_send = self.qywx_webhook_send if (
                     pusher["qywxwebhooksw"]) else nonepush
 
-                await gen.convert_yielded([send2bark(notice['barkurl'], title, content),
-                                           send2s(notice['skey'],
-                                                  title, content),
-                                           send2wxpusher(
-                                               notice['wxpusher'], title + "  " + content),
-                                           sendmail(
-                                               user['email'], title, content, sql_session=sql_session),
-                                           cus_pusher_send(
-                                               diypusher, title, content),
-                                           qywx_pusher_send(
-                                               notice['qywx_token'], title, content),
-                                           send2tg(
-                                               notice['tg_token'], title, content),
-                                           send2dingding(
-                                               notice['dingding_token'], title, content),
-                                           qywx_webhook_send(
-                                               notice['qywx_webhook'], title, content)
-                                           ])
+                channels = [
+                    ("bark", send2bark(notice['barkurl'], title, content)),
+                    ("server酱", send2s(notice['skey'], title, content)),
+                    ("wxpusher", send2wxpusher(notice['wxpusher'], title + "  " + content)),
+                    ("mail", sendmail(user['email'], title, content, sql_session=sql_session)),
+                    ("diy", cus_pusher_send(diypusher, title, content)),
+                    ("企业微信应用", qywx_pusher_send(notice['qywx_token'], title, content)),
+                    ("telegram", send2tg(notice['tg_token'], title, content)),
+                    ("钉钉", send2dingding(notice['dingding_token'], title, content)),
+                    ("企业微信webhook", qywx_webhook_send(notice['qywx_webhook'], title, content)),
+                ]
+                results = await gen.convert_yielded([c[1] for c in channels])
+                # [observability] 各 send2* 约定失败时返回 Exception 或字符串 "False"(键未配置/未发送);
+                # 被禁用渠道走 nonepush 返回 None(不告警)。旧实现丢弃返回值, 用户唯一启用的渠道挂了
+                # 也毫无察觉。这里把失败/未配置渠道记 warning, 让"通知本身没送达"可见(Codex#7)。
+                for (name, _), res in zip(channels, results):
+                    if isinstance(res, Exception) or res == "False":
+                        logger_funcs.warning(
+                            "推送渠道 %s 发送失败或未配置(userid=%s): %s", name, userid, res
+                        )
 
     async def send2bark(self, barklink, title, content):
         r = 'False'

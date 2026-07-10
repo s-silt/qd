@@ -152,12 +152,14 @@ class _FakeFetcher:
 
 class _FakePusher:
     calls = []
+    contents = []
 
     def __init__(self, db, sql_session=None):
         pass
 
     async def pusher(self, userid, pushsw, kind, title, content):
         _FakePusher.calls.append((userid, kind, title))
+        _FakePusher.contents.append(content)
 
 
 # --------------------------------------------------------------------------- #
@@ -187,6 +189,7 @@ def make_task(**over):
 def make_worker(monkeypatch):
     monkeypatch.setattr(worker, "Pusher", _FakePusher)
     _FakePusher.calls = []
+    _FakePusher.contents = []
 
     def _factory(db, fetcher=None):
         w = worker.BaseWorker(db)
@@ -365,3 +368,105 @@ def test_is_temporary_error_classification():
     assert worker.BaseWorker._is_temporary_error(Exception("HTTP 503 Service Unavailable")) is True
     assert worker.BaseWorker._is_temporary_error(Exception("签到失败: 验证码错误")) is False
     assert worker.BaseWorker._is_temporary_error(ValueError("bad password")) is False
+
+
+# --------------------------------------------------------------------------- #
+# 瞬时错误分类收紧 + 中文瞬时词 (reliability 重构)
+# --------------------------------------------------------------------------- #
+def test_is_temporary_error_chinese_busy_is_temporary():
+    # 中文站点在 200 正文里返回的瞬时业务错误应重试, 而非退避 8 次后禁用一个健康任务
+    assert worker.BaseWorker._is_temporary_error(Exception("签到失败: 系统繁忙, 请稍后再试")) is True
+    assert worker.BaseWorker._is_temporary_error(Exception("操作过于频繁, 请稍后重试")) is True
+
+
+def test_is_temporary_error_bare_digit_in_url_not_temporary():
+    # URL/正文里恰好出现的三位数字不能被误判为 5xx 瞬时错误 -> 否则永久失败被无限重试永不禁用
+    exc = Exception("Failed at 1/2 request, Request URL: http://x/api?score=500")
+    assert worker.BaseWorker._is_temporary_error(exc) is False
+
+
+def test_is_temporary_error_explicit_code_is_temporary():
+    # 带 code=/HTTP 上下文的 5xx 仍判瞬时
+    assert worker.BaseWorker._is_temporary_error(Exception("Response failed (code=503, error=None)")) is True
+
+
+def test_is_temporary_error_permanent_with_generic_retry_phrase():
+    # Codex#2: 永久失败(密码错误)即便带泛化的"请稍后再试"也不能被误判为瞬时->无限重试永不禁用
+    assert worker.BaseWorker._is_temporary_error(Exception("签到失败: 密码错误，请稍后再试")) is False
+    assert worker.BaseWorker._is_temporary_error(Exception("验证码错误, 请稍后重试")) is False
+    # 明确的"系统繁忙"仍判瞬时(不受影响)
+    assert worker.BaseWorker._is_temporary_error(Exception("系统繁忙，请稍后再试")) is True
+
+
+def test_temporary_small_retry_interval_is_floored():
+    # 普通(非瞬时)路径尊重用户 retry_interval 原值...
+    assert worker.BaseWorker.failed_count_to_time(0, retry_count=8, retry_interval=5) == 5
+    # ...但"瞬时错误(无限重试) + 极小 retry_interval"的自伤组合被 MIN_BACKOFF 兜底
+    assert worker.BaseWorker.failed_count_to_time(
+        0, retry_count=8, retry_interval=5, is_temporary=True
+    ) == 60
+
+
+# --------------------------------------------------------------------------- #
+# 永久禁用告警必须保留失败原因 (reliability 重构)
+# --------------------------------------------------------------------------- #
+async def test_permanent_disable_alert_keeps_reason(make_worker):
+    db = FakeDB()
+    w = make_worker(db, fetcher=_FakeFetcher(error=ValueError("bad password")))
+    # retry_count=1 且 last_failed_count=1 => backoff 返回 None => 本次直接禁用
+    result = await w.do(make_task(retry_count=1, last_failed_count=1))
+    assert result is False
+    failure_mod = [c for c in db.task_mod_calls if "last_failed" in c][-1]
+    assert failure_mod["disabled"] is True
+    assert failure_mod["next"] is None
+    # 禁用告警必须同时含"为什么"(原始原因)和"已禁用", 旧实现只剩后者
+    assert _FakePusher.contents, "permanent disable 应推送告警"
+    body = _FakePusher.contents[-1]
+    assert "bad password" in body
+    assert "任务已禁用" in body
+
+
+# --------------------------------------------------------------------------- #
+# 善后写库失败仍必须推进 next (reliability 重构: 防 producer ~500ms 紧抓重跑)
+# --------------------------------------------------------------------------- #
+async def test_bookkeeping_failure_still_advances_next(make_worker):
+    db = FakeDB()
+    db.encrypt_error = RuntimeError("encrypt boom")  # 成功善后事务(含 next)写库失败(提交前)
+    w = make_worker(db)
+    result = await w.do(make_task())
+    assert result is True  # 签到本身成功, 判定不回退
+    # 即便主善后事务失败, _safe_advance_next 也必须把 next 推到未来
+    next_mods = [c for c in db.task_mod_calls if c.get("next") is not None]
+    assert next_mods, "善后失败时 next 必须被兜底推进, 否则 ~500ms 紧抓重跑"
+    assert next_mods[-1]["next"] > time.time()
+
+
+async def test_interval_less_bookkeeping_failure_reschedules_daily_not_hourly(make_worker):
+    # Codex#1: interval-less(每日/cron)成功任务的善后写库失败时, 兜底必须按日级推进,
+    # 不能用 1h 短兜底把它提前到当天再签一次(重复签到)。
+    db = FakeDB()
+    db.tpl_row = dict(db.tpl_row, interval=None)  # 无 interval => 走每日调度
+    db.encrypt_error = RuntimeError("encrypt boom")  # 成功善后(提交前)失败, 触发兜底
+    w = make_worker(db)
+    result = await w.do(make_task())
+    assert result is True
+    next_mods = [c for c in db.task_mod_calls if c.get("next") is not None]
+    assert next_mods
+    delta = next_mods[-1]["next"] - time.time()
+    assert delta > 6 * 3600, f"interval-less 兜底应为日级而非 1h, 实际 +{delta:.0f}s"
+
+
+async def test_post_commit_failure_does_not_clobber_next(make_worker, monkeypatch):
+    # 事务已提交(next 已正确落库), 仅"提交后"的格式化/日志抛错 -> 绝不能再兜底覆盖已写好的 next
+    db = FakeDB()
+    w = make_worker(db)
+
+    def boom_info(*a, **k):
+        raise RuntimeError("post-commit boom")
+
+    monkeypatch.setattr(worker.logger_worker, "info", boom_info)
+    result = await w.do(make_task())
+    assert result is True
+    # 只有主成功事务写了一次 next; committed 守卫必须阻止 _safe_advance_next 的二次覆盖
+    next_mods = [c for c in db.task_mod_calls if "next" in c]
+    assert len(next_mods) == 1, "提交后失败不得触发兜底覆盖已提交的正确 next"

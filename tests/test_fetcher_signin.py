@@ -147,6 +147,113 @@ def test_failed_assert_triggers_failure():
 
 
 # ---------------------------------------------------------------------------
+# 断言引擎健壮性 (reliability 重构)
+# ---------------------------------------------------------------------------
+
+
+def test_failed_assert_bad_jinja_fails_closed():
+    """Codex#3: 失败断言里 Jinja 报错 -> fail-closed 判失败, 不放过登录页(不误报成功)。"""
+    f = Fetcher()
+    resp = make_response("请先登录".encode("utf-8"), code=200)  # 过期登录页, 无成功断言
+    rule = {"failed_asserts": [{"re": "{{ 1 // 0 }}", "from": "content"}]}
+    success, _ = f.run_rule(resp, rule, base_env())
+    assert success is False
+
+
+def test_failed_assert_templated_transient_shows_rendered_in_msg():
+    """Codex#4: 模板化失败断言命中后, 失败消息应含渲染后的文本(供瞬时错误分类识别)。"""
+    f = Fetcher()
+    env = {"session": [], "variables": {"err": "service unavailable"}}
+    resp = make_response(b"service unavailable", code=200)
+    rule = {"failed_asserts": [{"re": "{{ err }}", "from": "content"}]}
+    success, msg = f.run_rule(resp, rule, env)
+    assert success is False
+    assert "service unavailable" in msg  # 渲染值进入消息, 而非原始 {{ err }}
+
+
+def test_eval_assert_bad_jinja_does_not_raise():
+    """成功断言 re 里的 Jinja 报错必须被兜住(永不抛), 不能逃逸 run_rule。
+
+    旧实现把 _render 放在 try 外 -> 抛 HTTPError(500) 逃逸 -> 把本已成功的签到误判为硬失败/崩溃。
+    """
+    f = Fetcher()
+    resp = make_response("签到成功".encode("utf-8"), code=200)
+    rule = {"success_asserts": [{"re": "{{ 1 // 0 }}", "from": "content"}]}
+    # 不抛异常; 断言渲染失败 -> 视作未命中 -> 无正向证据 -> 判失败(而非崩溃)
+    success, _ = f.run_rule(resp, rule, base_env())
+    assert success is False
+
+
+def test_assert_slash_literal_semantics_preserved():
+    """断言侧保持与 master 一致的字面量语义: /login/ 按字面匹配, 不被重解释为正则。
+
+    (extract_variables 才解析 /.../flags; 断言侧刻意不解析, 避免静默放宽存量斜杠包裹断言。)
+    """
+    f = Fetcher()
+    resp = make_response(b"loginToken=abc", code=200)
+    # failed_assert '/login/' 在正文里找不到字面 '/login/' -> 不触发 -> 成功保持
+    rule = {"failed_asserts": [{"re": "/login/", "from": "content"}]}
+    success, _ = f.run_rule(resp, rule, base_env())
+    assert success is True
+
+
+def test_assert_missing_from_defaults_to_content():
+    """断言缺省 from 按 content 求值, 而非静默按空串(旧: from 缺失/拼错 -> 断言永不命中)。"""
+    f = Fetcher()
+    resp = make_response("签到成功".encode("utf-8"), code=200)
+    rule = {"success_asserts": [{"re": "签到成功"}]}  # 无 from
+    success, _ = f.run_rule(resp, rule, base_env())
+    assert success is True
+
+
+def test_extract_error_not_poisoned_into_variable():
+    """提取正则报错时变量不得被写成异常字符串(旧 =str(e) 会把报错当 token 发给下游请求)。"""
+    f = Fetcher()
+    env = base_env()
+    resp = make_response(b"whatever", code=200)
+    rule = {"extract_variables": [{"name": "tok", "re": "(", "from": "content"}]}  # 非法正则
+    f.run_rule(resp, rule, env)
+    val = env["variables"].get("tok")
+    assert not val
+    assert "unterminated" not in str(val)
+
+
+def test_require_success_assert_strict_fails_status_only(monkeypatch):
+    """开启 REQUIRE_SUCCESS_ASSERT 后, 仅状态断言(无内容成功断言)的"成功"判失败。"""
+    f = Fetcher()
+    monkeypatch.setattr(fetcher_mod.config, "require_success_assert", True)
+    resp = make_response(b"login page", code=200)
+    rule = {"success_asserts": [{"re": "200", "from": "status"}]}
+    success, msg = f.run_rule(resp, rule, base_env())
+    assert success is False
+    assert msg
+
+
+@pytest.mark.asyncio
+async def test_zero_request_top_level_fails(monkeypatch):
+    """for 循环变量为空 -> 整模板 0 次请求 -> (守卫开启时)判失败, 避免"空跑"误报签到成功。"""
+    f = Fetcher()
+    monkeypatch.setattr(fetcher_mod.config, "fail_on_zero_request", True)  # 守卫默认 opt-in, 测试显式开启
+    tpl = [
+        {"request": {"method": "GET", "url": "{% for x in items %}", "headers": [], "cookies": []}, "rule": {}},
+        {"request": {"method": "GET", "url": "http://ex/", "headers": [], "cookies": []}, "rule": {}},
+        {"request": {"method": "GET", "url": "{% endfor %}", "headers": [], "cookies": []}, "rule": {}},
+    ]
+    env = {"variables": {}, "session": []}  # items 未定义 -> 空可迭代 -> 循环体 0 次
+    with pytest.raises(Exception):
+        await f.do_fetch(tpl, env, proxies=[], request_limit=50)
+
+
+@pytest.mark.asyncio
+async def test_empty_template_fails_when_guard_on(monkeypatch):
+    """Codex#6: 空模板 tpl=[] 也算零请求空跑, 守卫开启时判失败(旧条件 len>0 漏掉了它)。"""
+    f = Fetcher()
+    monkeypatch.setattr(fetcher_mod.config, "fail_on_zero_request", True)
+    with pytest.raises(Exception):
+        await f.do_fetch([], {"variables": {}, "session": []}, proxies=[], request_limit=10)
+
+
+# ---------------------------------------------------------------------------
 # [P1 #35] 解码失败不抛 TypeError
 # ---------------------------------------------------------------------------
 
