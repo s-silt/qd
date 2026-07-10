@@ -82,6 +82,16 @@ class TestUtils(unittest.TestCase):
             enc = find_encoding(body, headers=None)
             codecs.lookup(enc)  # 不得抛 LookupError
 
+    def test_find_encoding_invalid_header_charset_discarded(self):
+        """Codex#5: 非法的响应头 charset(如 x-gbk)应被丢弃, 让位给探测/页面内 <meta>,
+        而非原样返回导致 decode() -> None。"""
+        import codecs
+        from libs._utils.jinja_filters import find_encoding
+        body = '<meta charset="gb2312">中文签到成功'.encode('gb2312')
+        enc = find_encoding(body, headers={"Content-Type": "text/html; charset=invalid-codec-xyz"})
+        codecs.lookup(enc)  # 返回值必为合法 codec
+        self.assertNotEqual(enc.lower(), "invalid-codec-xyz")
+
 
 if __name__ == "__main__":
     unittest.main()

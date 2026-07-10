@@ -425,36 +425,48 @@ class Fetcher(object):
             _cookies = cookie_utils.CookieSession()
             _cookies.from_json(session)
 
-        def _eval_assert(r):
-            # 渲染并安全求值单条断言, 永不抛异常 ([P1 #35])。
+        def _match_one(r):
+            # 渲染并求值单条断言: 命中 True / 未命中 False; 求值失败会向上抛(由调用方决定 fail-open/closed)。
             # 修复点:
-            #  1) 旧实现把 _render(r,'re') 放在 try 之外, 断言 re 里的 Jinja 报错会抛
-            #     HTTPError(500) 逃逸 run_rule -> 把本已成功的签到误判为硬失败(违反"永不抛"契约)。
-            #  2) 旧实现回写 r['re'], 在 for/while 循环里同一规则第 2 轮起被"冻结"成首轮渲染值;
-            #     这里渲染到局部, 不回写。
-            #  3) from 缺省为 'content'(旧实现缺失/拼错 from 会静默按空串求值)。
-            # 注意: 断言侧刻意不解析 /.../flags 分隔符(那是 extract_variables 的约定), 保持与
-            # master 一致的字面量匹配语义, 避免把存量斜杠包裹断言(如 /login/)静默重解释为正则。
+            #  1) 渲染到局部不回写 r['re'], 修 for/while 循环里同一规则第 2 轮起被"冻结"成首轮值;
+            #  2) from 缺省为 'content'(缺失/拼错 from 不再静默按空串求值)。
+            # 注意: 断言侧刻意不解析 /.../flags 分隔符(那是 extract_variables 的约定), 保持与 master
+            # 一致的字面量匹配语义, 避免把存量斜杠包裹断言(如 /login/)静默重解释为正则。
             raw = r.get("re")
             if not raw:
                 return False
+            rendered = self.jinja_env.from_string(raw).render(
+                _cookies=_cookies, **env["variables"]
+            )
+            if not rendered:
+                return False
+            data = getdata(r.get("from") or "content")
+            if data is None:
+                data = ""
+            return bool(re.search(rendered, data))
+
+        def _eval_assert(r):
+            # 成功断言用: 求值失败 -> 视为未命中(fail-closed: 无法确认成功即不算成功, 不误报)。
             try:
-                rendered = self.jinja_env.from_string(raw).render(
-                    _cookies=_cookies, **env["variables"]
-                )
-                if not rendered:
-                    return False
-                data = getdata(r.get("from") or "content")
-                if data is None:
-                    data = ""
-                return bool(re.search(rendered, data))
+                return _match_one(r)
             except Exception as e:
                 logger_fetcher.error(
-                    "Run rule assert failed: %s",
-                    str(e),
+                    "Run rule success-assert failed: %s", str(e),
                     exc_info=config.traceback_print,
                 )
                 return False
+
+        def _eval_failed_assert(r):
+            # 失败断言用: 求值失败 -> 视为"命中失败"(fail-closed: 无法确认"没失败"就当失败, 不放过
+            # 登录页/错误页, Codex#3)。旧 master 里断言渲染报错会抛出使整步失败, 语义与此等价。
+            try:
+                return _match_one(r)
+            except Exception as e:
+                logger_fetcher.error(
+                    "Run rule failed-assert eval error, treating as MATCH(fail): %s", str(e),
+                    exc_info=config.traceback_print,
+                )
+                return True
 
         # [A] 成功断言判定:
         # - content 类断言之间维持 OR (任一命中即视为内容成功);
@@ -513,9 +525,18 @@ class Fetcher(object):
                 )
 
         for r in rule.get("failed_asserts") or "":
-            if _eval_assert(r):
+            if _eval_failed_assert(r):
                 success = False
-                msg = f"Fail assert: {json.dumps(r, ensure_ascii=False)} from failed_asserts"
+                # 消息带上渲染后的断言文本(而非原始 {{ }}), 便于 worker 的瞬时错误分类看到实际
+                # 命中的内容(如 {{err}} -> "service unavailable"), 否则会漏判瞬时错误(Codex#4)。
+                try:
+                    shown = dict(r)
+                    shown["re"] = self.jinja_env.from_string(r.get("re", "")).render(
+                        _cookies=_cookies, **env["variables"]
+                    )
+                except Exception:
+                    shown = r
+                msg = f"Fail assert: {json.dumps(shown, ensure_ascii=False)} from failed_asserts"
                 break
 
         # [reliability] 弱判定可见化: 本步判"成功"却没有任何"内容成功断言"命中(仅凭 HTTP 状态,
@@ -959,8 +980,9 @@ class Fetcher(object):
             proxy = {}
 
         # 顶层调用(tpl_length 未初始化)才做"整模板零请求"防空跑判定; for/while/if 的递归调用
-        # 会带着非 0 的 tpl_length 进来, 不参与该判定。
-        top_level = tpl_length == 0 and len(tpl) > 0
+        # 会带着非 0 的 tpl_length 进来, 不参与该判定。空模板 tpl=[] 也应被判空跑(Codex#6),
+        # 故不再要求 len(tpl)>0。
+        top_level = tpl_length == 0
         start_limit = request_limit
 
         if tpl_length == 0 and len(tpl) > 0:

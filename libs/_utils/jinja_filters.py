@@ -142,6 +142,17 @@ def get_encodings_from_content(content):
     )
 
 
+def _valid_codec(name):
+    """名字是否为可用的 Python codec(供 decode 前过滤非法/私有 charset 名)。"""
+    if not name:
+        return False
+    try:
+        codecs.lookup(name)
+        return True
+    except LookupError:
+        return False
+
+
 def find_encoding(content, headers=None):
     # content is unicode
     if isinstance(content, str):
@@ -149,17 +160,21 @@ def find_encoding(content, headers=None):
 
     encoding = None
 
-    # Try charset from content-type
+    # 1) Content-Type 头里的 charset
     if headers:
         encoding = get_encoding_from_headers(headers)
         if encoding == 'ISO-8859-1':
             encoding = None
+    # 头里的 charset 也可能是非法/私有名(如 x-gbk): 若非法则丢弃, 让位给下面的探测/页面内 <meta>,
+    # 否则一个坏的 header charset 会挡住本可正确解码的页面, 令 decode 返回 None(Codex#5)。
+    if encoding and not _valid_codec(encoding):
+        encoding = None
 
-    # Fallback to auto-detected encoding.
+    # 2) charset_normalizer 探测
     if not encoding and charset_normalizer is not None:
         encoding = charset_normalizer.detect(content)['encoding']
 
-    # Try charset from content
+    # 3) 页面内 <meta>/XML 声明
     if not encoding:
         try:
             found = get_encodings_from_content(content)
@@ -167,16 +182,13 @@ def find_encoding(content, headers=None):
         except Exception as e:
             logger_util.debug(e, exc_info=config.traceback_print)
             encoding = None
-        # 校验从页面 <meta>/XML 提取到的编码名: 提取正则可能抓到 '"' 或 og:url 里的垃圾串,
-        # 直接拿去 content.decode() 会抛 LookupError 使 decode 返回 None(硬失败)。非法则丢弃回退。
-        if encoding:
-            try:
-                codecs.lookup(encoding)
-            except LookupError:
-                encoding = None
 
     if encoding and encoding.lower() == 'gb2312':
         encoding = 'gb18030'
+
+    # 统一兜底校验: 任何来源(头/探测/页面)得到的编码名都必须是合法 codec, 否则 decode 会返回 None。
+    if not _valid_codec(encoding):
+        encoding = None
 
     if encoding:
         return encoding

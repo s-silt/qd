@@ -390,6 +390,14 @@ def test_is_temporary_error_explicit_code_is_temporary():
     assert worker.BaseWorker._is_temporary_error(Exception("Response failed (code=503, error=None)")) is True
 
 
+def test_is_temporary_error_permanent_with_generic_retry_phrase():
+    # Codex#2: 永久失败(密码错误)即便带泛化的"请稍后再试"也不能被误判为瞬时->无限重试永不禁用
+    assert worker.BaseWorker._is_temporary_error(Exception("签到失败: 密码错误，请稍后再试")) is False
+    assert worker.BaseWorker._is_temporary_error(Exception("验证码错误, 请稍后重试")) is False
+    # 明确的"系统繁忙"仍判瞬时(不受影响)
+    assert worker.BaseWorker._is_temporary_error(Exception("系统繁忙，请稍后再试")) is True
+
+
 def test_temporary_small_retry_interval_is_floored():
     # 普通(非瞬时)路径尊重用户 retry_interval 原值...
     assert worker.BaseWorker.failed_count_to_time(0, retry_count=8, retry_interval=5) == 5
@@ -431,6 +439,21 @@ async def test_bookkeeping_failure_still_advances_next(make_worker):
     next_mods = [c for c in db.task_mod_calls if c.get("next") is not None]
     assert next_mods, "善后失败时 next 必须被兜底推进, 否则 ~500ms 紧抓重跑"
     assert next_mods[-1]["next"] > time.time()
+
+
+async def test_interval_less_bookkeeping_failure_reschedules_daily_not_hourly(make_worker):
+    # Codex#1: interval-less(每日/cron)成功任务的善后写库失败时, 兜底必须按日级推进,
+    # 不能用 1h 短兜底把它提前到当天再签一次(重复签到)。
+    db = FakeDB()
+    db.tpl_row = dict(db.tpl_row, interval=None)  # 无 interval => 走每日调度
+    db.encrypt_error = RuntimeError("encrypt boom")  # 成功善后(提交前)失败, 触发兜底
+    w = make_worker(db)
+    result = await w.do(make_task())
+    assert result is True
+    next_mods = [c for c in db.task_mod_calls if c.get("next") is not None]
+    assert next_mods
+    delta = next_mods[-1]["next"] - time.time()
+    assert delta > 6 * 3600, f"interval-less 兜底应为日级而非 1h, 实际 +{delta:.0f}s"
 
 
 async def test_post_commit_failure_does_not_clobber_next(make_worker, monkeypatch):
