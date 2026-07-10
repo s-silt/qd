@@ -188,6 +188,14 @@ task_while_loop_timeout = int(
 task_request_limit = int(
     os.getenv("TASK_REQUEST_LIMIT", "1500")
 )  # 任务运行中单个任务最大请求次数, 默认为 1500 次
+require_success_assert = bool(
+    strtobool(os.getenv("REQUIRE_SUCCESS_ASSERT", "False"))
+)  # 严格模式: 步骤"判成功"却无内容成功断言命中(仅凭 HTTP 状态/无成功断言)时判失败,
+# 防止过期会话/错误页静默假成功。默认关(向后兼容, 仅告警); 存量模板多为仅状态/无断言, 谨慎开启
+fail_on_zero_request = bool(
+    strtobool(os.getenv("FAIL_ON_ZERO_REQUEST", "False"))
+)  # 整个模板一次 HTTP 请求都没真正发出(如 for 循环变量为空)时判失败, 避免"空跑"误报签到成功。
+# 默认关: 零请求只是启发式判据, 对"条件分支合法跳过(如今天已签到)"的模板会误判失败, 谨慎开启
 
 # Tornado httpclient.HTTPRequest参数配置
 download_size_limit = int(

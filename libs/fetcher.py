@@ -425,28 +425,29 @@ class Fetcher(object):
             _cookies = cookie_utils.CookieSession()
             _cookies.from_json(session)
 
-        def _render(obj, key):
-            if not obj.get(key):
-                return
-            try:
-                obj[key] = self.jinja_env.from_string(obj[key]).render(
-                    _cookies=_cookies, **env["variables"]
-                )
-                return True
-            except Exception as e:
-                log_error = f"The error occurred when rendering template {key}: {obj[key]} \\r\\n {repr(e)}"
-                raise httpclient.HTTPError(500, log_error)
-
         def _eval_assert(r):
             # 渲染并安全求值单条断言, 永不抛异常 ([P1 #35])。
-            _render(r, "re")
-            if not r.get("re"):
+            # 修复点:
+            #  1) 旧实现把 _render(r,'re') 放在 try 之外, 断言 re 里的 Jinja 报错会抛
+            #     HTTPError(500) 逃逸 run_rule -> 把本已成功的签到误判为硬失败(违反"永不抛"契约)。
+            #  2) 旧实现回写 r['re'], 在 for/while 循环里同一规则第 2 轮起被"冻结"成首轮渲染值;
+            #     这里渲染到局部, 不回写。
+            #  3) from 缺省为 'content'(旧实现缺失/拼错 from 会静默按空串求值)。
+            # 注意: 断言侧刻意不解析 /.../flags 分隔符(那是 extract_variables 的约定), 保持与
+            # master 一致的字面量匹配语义, 避免把存量斜杠包裹断言(如 /login/)静默重解释为正则。
+            raw = r.get("re")
+            if not raw:
                 return False
             try:
-                data = getdata(r.get("from"))
+                rendered = self.jinja_env.from_string(raw).render(
+                    _cookies=_cookies, **env["variables"]
+                )
+                if not rendered:
+                    return False
+                data = getdata(r.get("from") or "content")
                 if data is None:
                     data = ""
-                return bool(re.search(r["re"], data))
+                return bool(re.search(rendered, data))
             except Exception as e:
                 logger_fetcher.error(
                     "Run rule assert failed: %s",
@@ -517,6 +518,23 @@ class Fetcher(object):
                 msg = f"Fail assert: {json.dumps(r, ensure_ascii=False)} from failed_asserts"
                 break
 
+        # [reliability] 弱判定可见化: 本步判"成功"却没有任何"内容成功断言"命中(仅凭 HTTP 状态,
+        # 或整个 step 无成功断言) -> 过期会话/错误页极易被记为签到成功。默认仅告警(不改判定,
+        # 保持向后兼容, 见 test_*_no_asserts_is_success / status_only_*); 打开 REQUIRE_SUCCESS_ASSERT
+        # 后, 对这类"无正向证据的成功"判失败。
+        if success and not content_asserts:
+            logger_fetcher.warning(
+                "run_rule: 步骤判成功但无内容成功断言(from=%s, code=%s), 过期会话/错误页可能被误判为成功; "
+                "建议为该步补一条 content success_assert(如 '签到成功')。",
+                "status-only" if status_asserts else "none",
+                response.code,
+            )
+            if getattr(config, "require_success_assert", False):
+                success = False
+                if not msg:
+                    msg = ("无内容成功断言命中(仅凭 HTTP 状态判定), REQUIRE_SUCCESS_ASSERT 已开启, "
+                           "按严格模式判失败")
+
         if (
             not success
             and msg
@@ -547,16 +565,23 @@ class Fetcher(object):
                 if "x" in re_m.group(2):
                     pass  # flags |= re.X # 该标志通过给予你更灵活的格式以便你将正则表达式写得更易于理解。暂不启用
 
+            _from = r.get("from") or "content"
             if find_all:
                 try:
                     env["variables"][r["name"]] = re.compile(pattern, flags).findall(
-                        getdata(r["from"])
+                        getdata(_from)
                     )
                 except Exception as e:
-                    env["variables"][r["name"]] = str(e)
+                    # [no-swallow] 不把正则/提取异常当作变量值塞给下游请求(旧 =str(e) 会把
+                    # "unterminated subpattern" 之类当 token 发出, 造成误导性下游失败/静默假成功);
+                    # 记 warning 并留空缺失, 让"变量未提取到"在后续步骤自然暴露。
+                    logger_fetcher.warning(
+                        "extract_variables '%s' failed (find_all, pattern=%r): %s",
+                        r.get("name"), pattern, e, exc_info=config.traceback_print,
+                    )
             else:
                 try:
-                    m = re.compile(pattern, flags).search(getdata(r["from"]))
+                    m = re.compile(pattern, flags).search(getdata(_from))
                     if m:
                         if m.groups():
                             m = m.groups()[0]
@@ -564,7 +589,10 @@ class Fetcher(object):
                             m = m.group(0)
                         env["variables"][r["name"]] = m
                 except Exception as e:
-                    env["variables"][r["name"]] = str(e)
+                    logger_fetcher.warning(
+                        "extract_variables '%s' failed (pattern=%r): %s",
+                        r.get("name"), pattern, e, exc_info=config.traceback_print,
+                    )
         return success, msg
 
     @staticmethod
@@ -930,6 +958,11 @@ class Fetcher(object):
         else:
             proxy = {}
 
+        # 顶层调用(tpl_length 未初始化)才做"整模板零请求"防空跑判定; for/while/if 的递归调用
+        # 会带着非 0 的 tpl_length 进来, 不参与该判定。
+        top_level = tpl_length == 0 and len(tpl) > 0
+        start_limit = request_limit
+
         if tpl_length == 0 and len(tpl) > 0:
             tpl_length = len(tpl)
             for i, entry in enumerate(tpl):
@@ -1154,4 +1187,16 @@ class Fetcher(object):
                     raise Exception(
                         f"Failed at {entry['idx']}/{tpl_length} request, \\r\\n{result['msg']}, \\r\\nRequest URL: {entry['request']['url']}"
                     )
+        # 整个模板一次 HTTP 请求都没真正发出(request_limit 未被任何 request 块消耗) -> 空跑。
+        # 典型: {% for x in items %} 的 items 为空/未提取到, 或所有 if 分支均未命中。此时不能
+        # 默认判成功, 否则 worker 会写 last_success/推送"签到成功", 用户以为签到了其实没有。
+        if (
+            top_level
+            and getattr(config, "fail_on_zero_request", True)
+            and request_limit == start_limit
+        ):
+            raise Exception(
+                "模板未发起任何 HTTP 请求(可能 for 循环变量为空/未提取到, 或 if 分支均未命中), "
+                "判定失败以避免空跑误报签到成功"
+            )
         return env, request_limit
