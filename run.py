@@ -13,6 +13,7 @@ import sys
 import tornado.log
 from tornado.httpserver import HTTPServer
 from tornado.ioloop import IOLoop, PeriodicCallback
+from tornado.process import task_id
 
 import config
 from db import DB, db_converter
@@ -128,16 +129,31 @@ def start_server():
         else:
             http_server.start()
 
+        # [reliability] 定时 worker 必须单例。MULTI_PROCESS=True 时 start(num_processes=0) 会 fork
+        # 出 N 个进程, 每个都各自持有内存 task_lock —— 若都启动 worker, 同一到期任务会被并发签到 N 次
+        # (重复签到、竞态写 next/last_*、统计翻倍)。仅在 fork 后的 0 号进程(或未 fork 时 task_id()==None)
+        # 启动 worker。注意: 多"容器"共用一个 DB 仍会重复(各容器 task_id 均为 None), 那需要 DB 级
+        # 任务租约, 属更大改动, 此处仅消除单机多进程重复。
+        worker_task_id = task_id()
+        run_worker = worker_task_id in (None, 0)
+
         io_loop = IOLoop.instance()
         try:
-            if config.worker_method.upper() == 'QUEUE':
+            # worker_method 合法性校验放在单例门控之前, 让配置写错在任何进程都响亮失败,
+            # 而非仅 0 号进程退出、其余进程"HTTP 端口在跑但永不签到"的静默失败。
+            method = config.worker_method.upper()
+            if method not in ('QUEUE', 'BATCH'):
+                raise RuntimeError('worker_method must be Queue or Batch, please check config!')
+            if not run_worker:
+                logger_qd.info(
+                    "本进程(task_id=%s)不启动定时 worker, 仅 0 号进程运行以避免重复签到", worker_task_id
+                )
+            elif method == 'QUEUE':
                 worker = QueueWorker(database)
                 io_loop.add_callback(worker)
-            elif config.worker_method.upper() == 'BATCH':
+            elif method == 'BATCH':
                 worker = BatchWorker(database)
                 PeriodicCallback(worker, config.check_task_loop).start()
-            else:
-                raise RuntimeError('worker_method must be Queue or Batch, please check config!')
         except Exception as e:
             logger.exception('worker start error: %s', e)
             raise KeyboardInterrupt() from e
