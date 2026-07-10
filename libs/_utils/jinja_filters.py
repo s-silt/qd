@@ -4,6 +4,7 @@
 # Jinja2 globals / filters and associated helper functions extracted from libs/utils.py
 # pylint: disable=broad-exception-raised
 
+import codecs
 import html
 import random
 import re
@@ -118,19 +119,26 @@ def quote_chinese(value, sep="", encoding="utf-8", decoding="utf-8"):
 # ---------------------------------------------------------------------------
 
 def get_encodings_from_content(content):
-    """Returns encodings from given content string.
+    """Returns encodings from given content.
 
-    :param content: bytestring to extract encodings from.
+    :param content: bytestring or str to extract encodings from.
     """
+    # 修复: 旧实现用 str 正则匹配 bytes 会抛 TypeError -> 在 find_encoding 里被 except 吞掉并恒
+    # 回退 utf-8, 页面内 <meta charset>/XML 声明的编码从未被真正读取。对 bytes 先取一个可匹配的
+    # latin-1 文本视图(仅用于扫 charset 标记, 不影响最终按探测到的编码解码)。
+    if isinstance(content, (bytes, bytearray)):
+        text = bytes(content).decode("latin-1", "ignore")
+    else:
+        text = content
 
     charset_re = re.compile(r'<meta.*?charset=["\']*(.+?)["\'>]', flags=re.I)
     pragma_re = re.compile(r'<meta.*?content=["\']*;?charset=(.+?)["\'>]', flags=re.I)
     xml_re = re.compile(r'^<\?xml.*?encoding=["\']*(.+?)["\'>]')
 
     return (
-        charset_re.findall(content)
-        + pragma_re.findall(content)
-        + xml_re.findall(content)
+        charset_re.findall(text)
+        + pragma_re.findall(text)
+        + xml_re.findall(text)
     )
 
 
@@ -154,17 +162,27 @@ def find_encoding(content, headers=None):
     # Try charset from content
     if not encoding:
         try:
-            encoding = get_encodings_from_content(content)
-            encoding = encoding and encoding[0] or None
+            found = get_encodings_from_content(content)
+            encoding = found[0] if found else None
         except Exception as e:
             logger_util.debug(e, exc_info=config.traceback_print)
-            if isinstance(content, bytes):
-                return encoding or 'utf-8'
+            encoding = None
+        # 校验从页面 <meta>/XML 提取到的编码名: 提取正则可能抓到 '"' 或 og:url 里的垃圾串,
+        # 直接拿去 content.decode() 会抛 LookupError 使 decode 返回 None(硬失败)。非法则丢弃回退。
+        if encoding:
+            try:
+                codecs.lookup(encoding)
+            except LookupError:
+                encoding = None
 
     if encoding and encoding.lower() == 'gb2312':
         encoding = 'gb18030'
 
-    return encoding or 'latin_1'
+    if encoding:
+        return encoding
+    # bytes 无法确定编码时默认回退 utf-8(与本次改动前一致, 避免退成 latin_1 把 UTF-8 多字节读成乱码);
+    # str 分支已在函数首行返回, 这里的 latin_1 仅为极端非 bytes 情况兜底。
+    return 'utf-8' if isinstance(content, (bytes, bytearray)) else 'latin_1'
 
 
 def decode(content, headers=None):
