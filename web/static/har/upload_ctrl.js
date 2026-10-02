@@ -62,7 +62,6 @@
       };
       $scope.load_file = function(data) {
         var each, i, len, loaded, name, ref1, ref2;
-        console.log(data);
         name = "";
         if (HARPATH !== "") {
           name = HARNAME;
@@ -93,7 +92,6 @@
           each = ref2[i];
           loaded.env[each] = "";
         }
-        console.log(analysis.find_variables(loaded.har));
         return $scope.loaded(loaded);
       };
       $scope.load_local_har = function() {
@@ -253,12 +251,17 @@
         return reader.readAsText($scope.file);
       };
       if (HARDATA !== "") {
+        // 公共模板订阅: HARDATA 是 pubtpl.content (base64 QD 数组)
         element.find('button').button('loading');
-        reader = new FileReader();
-        data = Base64.decode(HARDATA); // 解码
-        $scope.load_file(angular.fromJson(data));
-        if (utils.storage.get('har_har') != null) {
-          $scope.local_har = utils.storage.get('har_filename');
+        try {
+          data = Base64.decode(HARDATA);
+          $scope.load_file(angular.fromJson(data));
+          if (utils.storage.get('har_har') != null) {
+            $scope.local_har = utils.storage.get('har_filename');
+          }
+        } catch (error1) {
+          console.error(error1);
+          $scope.alert('公共模板解码失败，请刷新订阅仓库后重试');
         }
         element.find('button').button('reset');
         return true;

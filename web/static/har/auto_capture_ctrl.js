@@ -3,6 +3,8 @@
 (function() {
   define(function(require, exports, module) {
     var analysis = require('/static/har/analysis');
+    var utils = require('/static/components/utils');
+
     return angular.module('auto_capture_ctrl', []).controller('AutoCaptureCtrl', function($scope, $rootScope, $http) {
       $scope.enabled = false;
       $scope.url = '';
@@ -29,8 +31,10 @@
       };
 
       $scope.run = function() {
+        if ($scope.busy) return;
+
         if (!$scope.url) {
-          $scope.error = '请填写 URL';
+          $scope.error = '请填写抓包目标 URL';
           return;
         }
         var payload = {
@@ -43,7 +47,7 @@
           try {
             payload.storage_state = JSON.parse($scope.storage_state);
           } catch (e) {
-            $scope.error = 'storage_state 不是合法 JSON: ' + e.message;
+            $scope.error = 'storage_state 不是合法 JSON 格式: ' + e.message;
             return;
           }
         } else if ($scope.cookies) {
@@ -54,10 +58,11 @@
         $scope.error = '';
         $scope.result = null;
         $scope.candidates = [];
+
         $http.post('/har/auto_capture', payload).then(function(res) {
           $scope.busy = false;
           if (!res.data || !res.data.ok) {
-            $scope.error = (res.data && res.data.error) || '抓包失败';
+            $scope.error = (res.data && res.data.error) || '自动抓包失败';
             $scope.candidates = (res.data && res.data.candidates) || [];
             return;
           }
@@ -65,7 +70,7 @@
           $scope.candidates = res.data.candidates || [];
         }, function(res) {
           $scope.busy = false;
-          $scope.error = (res && res.data && res.data.error) || ('HTTP ' + (res && res.status));
+          $scope.error = (res && res.data && res.data.error) || ('HTTP ' + (res && res.status) + ' 请求异常');
         });
       };
 
@@ -74,17 +79,41 @@
         if (!$scope.result) return;
         var har = ($scope.result.ai && $scope.result.ai.har) || $scope.result.har;
         if (!har) return;
+
+        var rawHar;
+        if (Array.isArray(har)) {
+          rawHar = utils.tpl2har(har);
+        } else if (har && har.log) {
+          rawHar = har;
+        } else {
+          rawHar = utils.tpl2har([har]);
+        }
+
+        var analyzedHar = analysis.analyze(rawHar, {});
+        var entryCount = (analyzedHar && analyzedHar.log && analyzedHar.log.entries) ? analyzedHar.log.entries.length : 0;
+        var isAiApplied = !!($scope.result.ai && $scope.result.ai.har);
+
         var loaded = {
           filename: ($scope.result.ai && $scope.result.ai.result && $scope.result.ai.result.sitename)
                     || $scope.url
                     || '自动抓包',
-          har: analysis.analyze(har, {}),
+          har: analyzedHar,
           upload: true
         };
         loaded.env = {};
         var vars = analysis.find_variables(loaded.har) || [];
-        for (var i = 0; i < vars.length; i++) loaded.env[vars[i]] = '';
+        for (var i = 0; i < vars.length; i++) {
+          loaded.env[vars[i]] = '';
+        }
+
         $rootScope.$emit('har-loaded', loaded);
+        $rootScope.$broadcast('editor-alert', {
+          type: 'success',
+          message: isAiApplied
+            ? ('已应用自动抓包与 AI 识别结果，已覆盖当前编辑器条目（保留 ' + entryCount + ' 条关键请求）。')
+            : ('已应用自动抓包结果，已覆盖当前编辑器条目（共 ' + entryCount + ' 条请求）。')
+        });
+
         angular.element('#auto-capture').modal('hide');
       };
 

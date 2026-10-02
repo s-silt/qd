@@ -524,28 +524,30 @@ class HARSave(BaseHandler):
 
 
 async def _analyze_har_with_ai(har: dict, hint: str) -> dict:
-    """将 HAR 经预处理后送给 LLM, 返回 {result, har, stats}。
+    """抓包 → 特征提取 → AI 生成 → 校验落盘。各步只读上一步的返回值。
 
+    prepare 边界：特征提取/组 prompt 走 ``analyze_har``，校验落盘走
+    ``apply_ai_result``；上游 chat 仍由 AIClient。CPU 密集步在 executor。
     抛出 ai_client.AIClientError; 调用方负责捕获并友好显示。
     """
     client = ai_client.AIClient()
     if not client.enabled:
         raise ai_client.AIClientError("AI_API_KEY 未配置")
-    # preprocess_har 对大 HAR 是 CPU 密集 (深度遍历 + 截断 + 序列化), 同步执行会阻塞
-    # IOLoop, 拖延正在跑的签到。放到线程池里执行, 让事件循环保持可调度。
+    # analyze_har（含 preprocess）对大 HAR 是 CPU 密集, 同步执行会阻塞 IOLoop。
     loop = asyncio.get_running_loop()
-    slim = await loop.run_in_executor(
-        None, ai_client.preprocess_har, har, config.ai_max_har_entries
+    prepared = await loop.run_in_executor(
+        None, lambda: ai_client.analyze_har(har, hint=hint)
     )
-    if not slim:
+    if not prepared["entries"]:
         raise ai_client.AIClientError("HAR 中未找到可分析的请求（可能均被过滤）")
-    messages = ai_client.build_messages(slim, hint=hint)
-    content = await client.chat(messages, temperature=0.1)
+    content = await client.chat(prepared["messages"], temperature=0.1)
     result = ai_client.parse_ai_response(content)
+    applied = ai_client.apply_ai_result(result)
     return {
-        "result": result,
-        "har": ai_client.ai_result_to_har(result),
-        "stats": {"input_entries": len(slim)},
+        "result": applied["result"],
+        "har": applied["har"],
+        "warnings": applied["warnings"],
+        "stats": prepared["stats"],
     }
 
 
@@ -613,16 +615,23 @@ class HARAIAnalyze(BaseHandler):
         try:
             ai_out = await _analyze_har_with_ai(har, hint)
         except ai_client.AIClientError as e:
-            logger_web_handler.warning("AI 分析失败: %s", e)
+            from libs.ai.errors import public_error_fields
+
+            fields = public_error_fields(e)
+            logger_web_handler.warning("AI 分析失败: %s", fields["error"])
             self.set_status(502)
-            await self.finish({"ok": False, "error": str(e)})
+            await self.finish({"ok": False, "error": fields["error"]})
             return
         except Exception as e:
+            from libs.ai.redact import redact_secrets
+
             logger_web_handler.error(
                 "AI 分析异常: %s", e, exc_info=config.traceback_print
             )
             self.set_status(500)
-            await self.finish({"ok": False, "error": f"内部错误: {e}"})
+            await self.finish(
+                {"ok": False, "error": f"内部错误: {redact_secrets(str(e))}"}
+            )
             return
 
         await self.finish(
@@ -630,6 +639,7 @@ class HARAIAnalyze(BaseHandler):
                 "ok": True,
                 "har": ai_out["har"],
                 "result": ai_out["result"],
+                "warnings": ai_out.get("warnings") or [],
                 "stats": ai_out["stats"],
             }
         )
@@ -717,11 +727,15 @@ class HARAutoCapture(BaseHandler):
                 wait_after_click_ms=payload.get("wait_after_click_ms", 3000),
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
+            from libs.ai.redact import redact_secrets
+
             logger_web_handler.error(
                 "auto_capture 异常: %s", e, exc_info=config.traceback_print
             )
             self.set_status(500)
-            await self.finish({"ok": False, "error": f"内部错误: {e}"})
+            await self.finish(
+                {"ok": False, "error": f"内部错误: {redact_secrets(str(e))}"}
+            )
             return
 
         # 抓包失败 / 没要求 AI 分析, 直接返回
@@ -736,12 +750,16 @@ class HARAutoCapture(BaseHandler):
             result["ai"] = ai_out
         except ai_client.AIClientError as e:
             # AI 不可用或 HAR 无可分析请求 - 不算硬错误, 标记 ai_skipped
-            result["ai_skipped"] = str(e)
+            from libs.ai.errors import public_error_fields
+
+            result["ai_skipped"] = public_error_fields(e)["error"]
         except Exception as e:  # pylint: disable=broad-exception-caught
+            from libs.ai.redact import redact_secrets
+
             logger_web_handler.error(
                 "auto_capture AI 分析异常: %s", e, exc_info=config.traceback_print
             )
-            result["ai_error"] = f"AI 分析内部错误: {e}"
+            result["ai_error"] = f"AI 分析内部错误: {redact_secrets(str(e))}"
 
         await self.finish(result)
 
@@ -825,11 +843,15 @@ class GetCookiesAPI(BaseHandler):
                 user_agent=user_agent,
             )
         except Exception as e:
+            from libs.ai.redact import redact_secrets
+
             logger_web_handler.error(
                 "get_cookies 异常: %s", e, exc_info=config.traceback_print
             )
             self.set_status(500)
-            await self.finish({"ok": False, "error": f"内部错误: {e}"})
+            await self.finish(
+                {"ok": False, "error": f"内部错误: {redact_secrets(str(e))}"}
+            )
             return
 
         await self.finish(result)

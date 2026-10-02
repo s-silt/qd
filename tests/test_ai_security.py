@@ -54,7 +54,7 @@ class TestResponseSignals:
         assert not out[0].get("respSignals")
 
     def test_nested_signal_extracted(self):
-        from libs.ai_client import _extract_response_signals
+        from libs.ai.har_pipeline import _extract_response_signals
         sig = _extract_response_signals(
             json.dumps({"ret": 0, "data": {"message": "duplicate sign"}})
         )
@@ -73,7 +73,7 @@ class TestNoiseSignin:
         }
 
     def test_jsonp_signin_js_kept(self):
-        from libs.ai_client import _is_noise
+        from libs.ai.har_pipeline import _is_noise
         # 签到相关的 .js / javascript (JSONP) 不应被当噪声删掉
         e = self._entry(
             "https://x.com/user/checkin.js?cb=f", mime="application/javascript"
@@ -81,12 +81,12 @@ class TestNoiseSignin:
         assert _is_noise(e) is False
 
     def test_plain_static_js_dropped(self):
-        from libs.ai_client import _is_noise
+        from libs.ai.har_pipeline import _is_noise
         e = self._entry("https://x.com/static/app.js", mime="application/javascript")
         assert _is_noise(e) is True
 
     def test_signin_kept_via_hint(self):
-        from libs.ai_client import _is_noise
+        from libs.ai.har_pipeline import _is_noise
         # 普通 .js, 但 hint 指明站点签到路径关键字, 同时 url 含该关键字
         e = self._entry("https://x.com/qiandao.js", mime="application/javascript")
         assert _is_noise(e, hint="每日 qiandao") is False
@@ -172,7 +172,7 @@ class TestTemplateValidation:
 
 class TestPromptGuidance:
     def test_system_prompt_anchored_guidance(self):
-        from libs.ai_client import _SYSTEM_PROMPT
+        from libs.ai.har_pipeline import _SYSTEM_PROMPT
         # 引导带字段名/引号边界的断言
         assert '"code":0' in _SYSTEM_PROMPT or '"success":true' in _SYSTEM_PROMPT
         # status:200 不能单独作为成功条件

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+1. Refactor(ai): ♻️ 按 gpt-load `5ddc867` 的分层重做 OpenAI 兼容客户端：`libs/ai/` 拆成 transport / prepare / chat_conversion / HAR pipeline。`libs/ai_client.py` 保留为导入垫片。
+   - 并行 tool delta 先拆再喂同一状态机；缺 `finish_reason` 拒绝终态；prepare 不改共享 messages。
+   - `/har/ai_analyze` 增加 `warnings`，失败文案脱敏。密钥仍只来自 `AI_API_KEY`。
+   - `BaseWorker.do` 仍返回布尔；终态细节在 `last_result`。
+   - 说明见 `docs/refactor-gpt-load-lessons.md`。
+
 ### Features
 
 1. Feature(get-cookies): 🍪 集成 **Get-Cookies 浏览器扩展**功能到主项目：

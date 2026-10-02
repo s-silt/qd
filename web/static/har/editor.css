@@ -167,3 +167,39 @@ h1 {
 .plaintext_only {
   -webkit-user-modify: read-write-plaintext-only;
 }
+
+/* AI & Auto-capture & Toolbar styles */
+.editor-action-bar button,
+.editor-action-bar a {
+  margin-left: 4px;
+  margin-bottom: 6px;
+}
+
+.text-warning-dark {
+  color: #8a6d3b;
+}
+
+.entry-toolbar {
+  background: #fdfdfd;
+  border: 1px solid #e3e3e3;
+  border-radius: 4px;
+  padding: 6px 12px;
+}
+
+@media (max-width: 768px) {
+  .entry {
+    padding-left: 36px;
+    font-size: 13px;
+  }
+  .entry-checked {
+    padding: 0 8px;
+  }
+  .editor-action-bar {
+    text-align: center !important;
+  }
+  .editor-action-bar button,
+  .editor-action-bar a {
+    width: 48%;
+    margin: 1%;
+  }
+}

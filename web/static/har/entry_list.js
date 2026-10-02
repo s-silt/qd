@@ -13,10 +13,18 @@
     return angular.module('entry_list', []).controller('EntryList', function($scope, $rootScope, $http) {
       var har2tpl;
       $scope.filter = {};
+      $scope.editor_alert = null;
+
+      $rootScope.$on('editor-alert', function(ev, alert) {
+        $scope.editor_alert = alert;
+      });
+      $scope.close_editor_alert = function() {
+        $scope.editor_alert = null;
+      };
+
       // on uploaded event
       $rootScope.$on('har-loaded', function(ev, data) {
         var x;
-        console.info(data);
         $scope.data = data;
         window.global_har = $scope.data;
         $scope.filename = data.filename;
@@ -97,12 +105,27 @@
       };
       $scope.inverse = function() {
         var entry, i, len, ref;
-        ref = $scope.har.log.entries;
+        ref = ($scope.har && $scope.har.log && $scope.har.log.entries) ? $scope.har.log.entries : [];
         for (i = 0, len = ref.length; i < len; i++) {
           entry = ref[i];
           entry.checked = !entry.checked;
         }
-        return $scope.save_change_storage();
+        return $scope.save_change();
+      };
+      $scope.delete_selected = function() {
+        var entries = ($scope.har && $scope.har.log && $scope.har.log.entries) ? $scope.har.log.entries : [];
+        var remaining = [];
+        var removed = 0;
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i].checked) {
+            removed++;
+          } else {
+            remaining.push(entries[i]);
+          }
+        }
+        if (removed === 0) return;
+        $scope.har.log.entries = remaining;
+        $scope.save_change();
       };
       $scope.status_label = function(status) {
         if (Math.floor(status / 100) === 2) {

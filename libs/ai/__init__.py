@@ -1,16 +1,13 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
-"""兼容垫片。实现已迁到 ``libs.ai``。
+"""QD AI 辅助签到：OpenAI 兼容客户端与 HAR 模板生成。
 
-新代码请 ``from libs.ai import ...``。本模块只再导出 HAR/调度真正需要的公开 API；
-``_is_noise`` / ``_extract_response_signals`` / ``_SYSTEM_PROMPT`` 等私有符号
-请直接从 ``libs.ai.har_pipeline`` 导入，不再经本垫片 re-export。
+公开符号保持与历史 ``libs.ai_client`` 一致，供 handler 与测试继续导入。
 """
 
-from libs.ai import (
-    AIClient,
-    AIClientError,
-    HARSizeLimitExceeded,
+from libs.ai.client import AIClient
+from libs.ai.errors import AIClientError, HARSizeLimitExceeded
+from libs.ai.har_pipeline import (
     ai_result_to_har,
     analyze_har,
     apply_ai_result,
@@ -21,6 +18,7 @@ from libs.ai import (
     read_capped,
     validate_ai_template,
 )
+from libs.ai.redact import redact_secrets
 
 __all__ = [
     "AIClient",
@@ -34,5 +32,6 @@ __all__ = [
     "parse_ai_response",
     "preprocess_har",
     "read_capped",
+    "redact_secrets",
     "validate_ai_template",
 ]
