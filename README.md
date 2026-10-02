@@ -4,7 +4,7 @@
    </a>
 </p>
 
-<h1 align="center">QD for Python3</h1>
+<h1 align="center">QD框架20261002</h1>
 
 <div align="center">
 QD [v20261002] —— 一个<b>HTTP请求定时任务自动执行框架</b> base on HAR Editor and Tornado Server
