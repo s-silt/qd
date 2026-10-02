@@ -8,14 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
-1. Refactor(ai): 借鉴 gpt-load `5ddc867` 拆分 OpenAI 兼容客户端为 `libs/ai/`（transport / prepare / chat_conversion / HAR pipeline）；`libs/ai_client.py` 收窄为公开 API 垫片。
-   - 并行 tool delta 先拆再喂同一状态机；缺 `finish_reason` 拒绝终态；prepare 深拷贝本轮 messages。
-   - `/har/ai_analyze` 多返回 `warnings`；失败文案脱敏；Worker 异常路径写 `last_result`。
-   - 说明见 `docs/refactor-gpt-load-lessons.md`。
-2. Frontend(har): AI 面板展示 warnings / 禁用·跳过·失败态；自动抓包展示 `ai_skipped`/`ai_error`；移除 console 打印完整 HAR；tasklog 筛选与坏标签修复。
-3. Docs: `templates/README.md` 澄清官方订阅 vs 本地样例；`ai-sign-template` 增补前端 warnings 说明。
-4. Compat: 新增官方 `qd-today/templates` 格式回归测试；HARDATA 解码失败友好提示。
-5. Deps: Dependabot pip 组（tornado 6.5.8、requests/urllib3、aiohttp、aiomysql 等）与 npm `qs`/`webpack` 更新。
+1. AI：拆分 `libs/ai/`（传输、请求准备、流式转换、HAR 流水线）；`libs/ai_client.py` 仅保留公开导入。
+2. AI：`/har/ai_analyze` 增加 `warnings`；失败信息脱敏；Worker 异常路径写入 `last_result`。
+3. 前端：HAR 编辑器展示 warnings 与禁用/跳过/失败态；自动抓包展示 `ai_skipped`/`ai_error`；去掉控制台打印完整 HAR；任务日志筛选修复。
+4. 文档：`templates/README.md`、AI 签到教程补充 warnings 说明。
+5. 兼容：官方 `qd-today/templates` 格式回归测试；HARDATA 解码失败提示。
+6. 依赖：pip 组（含 tornado 6.5.8 等）与 npm `qs`/`webpack` 更新。
 
 ### Tests
 

@@ -2,8 +2,6 @@ name: ChangeRelease
 on:
   workflow_dispatch: {}
   push:
-    paths: [CHANGELOG.md]
-    branches: [master]
     tags: ["*"]
 
 jobs:
@@ -13,6 +11,5 @@ jobs:
     - uses: dropseed/changerelease@v1
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        # optional
         tag_prefix: ""
         changelog: CHANGELOG.md
