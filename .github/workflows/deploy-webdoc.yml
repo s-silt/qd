@@ -3,7 +3,7 @@ name: Deploy Webdoc
 on:
   push:
     branches:
-      - master
+      - main
       - webdoc
     paths:
       - ".github/workflows/deploy-webdoc.yml"
