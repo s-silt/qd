@@ -26,3 +26,14 @@
 - **`password` 属敏感信息。** 账号密码型模板（如 `linkai-signin.json`）每次运行都会向站点**明文回传账号密码**。请确保你的 QD 实例只有自己能访问。
 - **优先 token 方案。** 若站点提供长期有效的 token / API Key，建议改用「token 直填」：删掉账号密码登录步骤，直接把抓到的 `Bearer` token 作为变量填到签到步骤，避免反复回传密码（注意 token 可能过期，需定期更新）。
 - **Cookie 同样敏感。** Cookie 型模板（NodeSeek、恩山）填入的是登录态 Cookie，等价于账号登录凭证，请妥善保管、勿外泄。
+
+## 与官方模板仓库的关系
+
+本目录的 `.json` 是**仓库内置的开箱示例**，与线上「公共模板订阅」是两条通路：
+
+| 通路 | 来源 | 加载方式 |
+| --- | --- | --- |
+| 开箱示例 | `templates/*.json`（本目录） | 手动上传到 HAR 编辑器；无 `log` 时走 `utils.tpl2har` |
+| 公共订阅 | [qd-today/templates](https://github.com/qd-today/templates) 的 `tpls_history.json` + `.har` | 管理端订阅仓库 → `pubtpl` 表 → `/har/edit?reponame=&name=` 把 `content`(base64 QD 数组) 注入 `HARDATA` → 同样走 `tpl2har` |
+
+官方 `.har` 文件多数已是 **QD 步骤数组**（`[{request, rule}, ...]`），不是浏览器 HAR 的 `log.entries`。运行时**不需要**把官方仓做成 git submodule，也不必拷进本目录；默认订阅 URL 已是 `https://github.com/qd-today/templates`（见 `db/db_converter.py`）。

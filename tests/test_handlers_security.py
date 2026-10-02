@@ -399,18 +399,25 @@ async def test_har_upload_small_reaches_analyze(monkeypatch):
 
 
 async def test_preprocess_har_runs_off_event_loop_thread(monkeypatch):
-    """[#15] CPU-bound preprocess must run in an executor, not block the IOLoop."""
+    """[#15] CPU-bound prepare (analyze_har) must run in an executor, not block the IOLoop."""
     main_thread = threading.get_ident()
     seen = {}
 
-    def fake_preprocess(har, max_entries):
+    def fake_analyze(har, hint="", max_entries=None):
         seen["thread"] = threading.get_ident()
-        return [{"dummy": 1}]
+        return {
+            "entries": [{"dummy": 1}],
+            "messages": [],
+            "stats": {"input_entries": 1},
+        }
 
-    monkeypatch.setattr(har_mod.ai_client, "preprocess_har", fake_preprocess)
-    monkeypatch.setattr(har_mod.ai_client, "build_messages", lambda slim, hint="": [])
+    monkeypatch.setattr(har_mod.ai_client, "analyze_har", fake_analyze)
     monkeypatch.setattr(har_mod.ai_client, "parse_ai_response", lambda c: {})
-    monkeypatch.setattr(har_mod.ai_client, "ai_result_to_har", lambda r: [])
+    monkeypatch.setattr(
+        har_mod.ai_client,
+        "apply_ai_result",
+        lambda r, allowed_hosts=None: {"har": [], "warnings": [], "result": r},
+    )
 
     class _Client:
         enabled = True
@@ -423,5 +430,5 @@ async def test_preprocess_har_runs_off_event_loop_thread(monkeypatch):
 
     out = await har_mod._analyze_har_with_ai({"log": {"entries": []}}, "")
     assert "thread" in seen
-    assert seen["thread"] != main_thread, "preprocess_har must run off the event-loop thread"
+    assert seen["thread"] != main_thread, "analyze_har must run off the event-loop thread"
     assert out["stats"]["input_entries"] == 1

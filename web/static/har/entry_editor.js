@@ -20,7 +20,6 @@
       // on edit event
       $scope.$on('edit-entry', function(ev, entry) {
         var base, base1, base2;
-        console.info(entry);
         $scope.entry = entry;
         if ((base = $scope.entry).success_asserts == null) {
           base.success_asserts = [
@@ -1019,8 +1018,6 @@
               console.error(error.message);
               result = data.match(re);
             }
-            console.log('The original result is ', result);
-            console.log('The result of toString() is ' + result.toString());
             return result;
           } else {
             if (m = data.match(re)) {

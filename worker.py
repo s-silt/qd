@@ -28,11 +28,24 @@ from libs.parse_url import parse_url
 logger_worker = Log('QD.Worker').getlogger()
 
 
+class TaskRunResult:
+    """一次签到 attempt 的终态。调度循环只读它，不在 runner 里重判业务成败。"""
+
+    def __init__(self, success: bool, task_id, reason: str = ""):
+        self.success = bool(success)
+        self.task_id = task_id
+        self.reason = reason
+
+    def __bool__(self) -> bool:
+        return self.success
+
+
 class BaseWorker:
     def __init__(self, db: DB):
         self.running = False
         self.db = db
         self.fetcher = Fetcher()
+        self.last_result = None
 
     async def clear_log(self, taskid, sql_session=None):
         """清理单个 task 过期日志，使用批量删除。"""
@@ -519,7 +532,10 @@ class BaseWorker:
                 await pushtool.pusher(userid, pushsw, should_push, title, content)
             except Exception as e:
                 logger_worker.error('taskid:%s push failed! %s', task.get('id'), str(e), exc_info=config.traceback_print)
-        return is_success
+        reason = "" if is_success else str(exec_error or "")
+        self.last_result = TaskRunResult(is_success, task.get("id"), reason)
+        # 返回值保持 bool，既有调用方与测试用 `is True` / `is False` 判断。
+        return True if is_success else False
 
     async def _safe_advance_next(self, task, tpl, success):
         """善后写库失败时, 尽力把 task.next 推到未来, 防止 producer ~500ms 紧抓重跑。
@@ -631,6 +647,9 @@ class QueueWorker(BaseWorker):
             except Exception as e:
                 logger_worker.error(
                     'Runner %d get task: %s, failed! %s' , id, task['id'], str(e), exc_info=config.traceback_print)
+                # NOTES#4: 异常路径也要写 last_result，避免残留上一任务终态。
+                self.last_result = TaskRunResult(False, task.get("id"), str(e))
+                done = False
             if done:
                 self.success += 1
                 self.task_lock.pop(task['id'], None)

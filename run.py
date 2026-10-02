@@ -27,6 +27,18 @@ if sys.getdefaultencoding() != 'utf-8':
     importlib.reload(sys)
 
 
+def _check_ai_config(logger):
+    """AI 密钥只允许来自环境变量。空 key 关闭功能，不把默认地址当成已启用。"""
+    if not config.ai_api_key:
+        logger.info("AI 功能未启用 (AI_API_KEY 为空)")
+        return
+    logger.info(
+        "AI 功能已启用 model=%s base_url=%s",
+        config.ai_model,
+        config.ai_base_url,
+    )
+
+
 def _check_default_secrets(logger):
     """启动时检查关键密钥是否仍为默认值，是则醒目告警。
 
@@ -115,6 +127,7 @@ def start_server():
         config.autoreload = False
 
     _check_default_secrets(logger_qd)
+    _check_ai_config(logger_qd)
 
     try:
         database = asyncio.run(_init_database(logger_qd))

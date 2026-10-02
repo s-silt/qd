@@ -81,6 +81,8 @@ QD [v20260429] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 
 > 上游官方使用指南：<https://qd-today.github.io/qd/zh_CN/>
 > 历史变更详见 **[CHANGELOG.md](./CHANGELOG.md)**
+>
+> AI 兼容层已拆到 `libs/ai/`（传输、请求准备、流式 tool 转换、HAR 模板校验分开）。产品仍是 HAR 定时签到，不是 API 网关。迁移注意见 [docs/refactor-gpt-load-lessons.md](./docs/refactor-gpt-load-lessons.md)。环境变量名未变，密钥只从 `AI_API_KEY` 读取，不要写入仓库。
 
 维护项目精力有限, 仅保证对 Chrome 浏览器的支持。如果测试了其他浏览器可以 Pull Request。
 

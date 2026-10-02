@@ -54,7 +54,6 @@ define (require, exports, module) ->
         )
 
       $scope.load_file = (data) ->
-        console.log data
         name = ""
         if HARPATH != ""
           name = HARNAME
@@ -81,7 +80,6 @@ define (require, exports, module) ->
         loaded.env = {}
         for each in analysis.find_variables loaded.har
           loaded.env[each] = ""
-        console.log analysis.find_variables loaded.har
         $scope.loaded(loaded)
 
       $scope.load_local_har = () ->
@@ -218,11 +216,15 @@ define (require, exports, module) ->
         return reader.readAsText($scope.file)
 
       if HARDATA != ""
+        # 公共模板订阅: HARDATA 是 pubtpl.content (base64 QD 数组)
         element.find('button').button('loading')
-        reader = new FileReader()
-        data = Base64.decode(HARDATA)   # 解码
-        $scope.load_file(angular.fromJson(data))
-        $scope.local_har = utils.storage.get('har_filename') if utils.storage.get('har_har')?
+        try
+          data = Base64.decode(HARDATA)
+          $scope.load_file(angular.fromJson(data))
+          $scope.local_har = utils.storage.get('har_filename') if utils.storage.get('har_har')?
+        catch error
+          console.error error
+          $scope.alert('公共模板解码失败，请刷新订阅仓库后重试')
         element.find('button').button('reset')
         return true
       else
