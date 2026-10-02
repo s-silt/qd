@@ -64,15 +64,7 @@ QD [v20261002] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 快速开始
 ==========
 
-本 fork（[s-silt/qd](https://github.com/s-silt/qd)）在原项目基础上增强了 **AI 智能识别签到**、**URL 自动抓包（Playwright）**，并持续做运行时优化、worker 可靠性与安全修复。请按下列顺序阅读：
-
-**v20261002 更新要点：**
-- AI 客户端按 gpt-load 思路拆分为 libs/ai/（transport / prepare / chat_conversion / HAR pipeline），libs/ai_client.py 仅作兼容垫片
-- /har/ai_analyze 返回 warnings；HAR 编辑器展示校验告警、自动抓包 AI 跳过/失败态；去掉控制台打印完整 HAR
-- 官方模板库 [qd-today/templates](https://github.com/qd-today/templates) 订阅格式兼容（见 	emplates/README.md）
-- 依赖：pip 组更新（含 tornado 6.5.8 等）、前端 qs/webpack
-
-本 fork 在原版基础上新增了 **AI 智能识别签到**、**URL 自动抓包（Playwright）** 等能力，并优化了 worker 性能、修复了若干安全问题。建议按以下顺序阅读：
+本 fork（[s-silt/qd](https://github.com/s-silt/qd)）在原版基础上新增了 **AI 智能识别签到**、**URL 自动抓包（Playwright）** 等能力，并做了运行时与安全方面的修复。建议按以下顺序阅读：
 
 1. **[Docker 部署教程](./web/docs/zh_CN/guide/docker-deploy.md)** —— 从零开始用 Docker 部署本 fork（含 MySQL、Nginx + HTTPS、备份回滚、常见问题）
 2. **[HAR 抓包教程](./web/docs/zh_CN/guide/har-capture.md)** —— 浏览器（Chrome/Edge/Firefox/Safari）、桌面工具（Fiddler/Charles/mitmproxy）、移动端（Android/iOS）抓 HAR 完整指南
@@ -90,7 +82,6 @@ QD [v20261002] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 > 上游官方使用指南：<https://qd-today.github.io/qd/zh_CN/>
 > 历史变更详见 **[CHANGELOG.md](./CHANGELOG.md)**
 >
-> AI 兼容层已拆到 `libs/ai/`（传输、请求准备、流式 tool 转换、HAR 模板校验分开）。产品仍是 HAR 定时签到，不是 API 网关。迁移注意见 [docs/refactor-gpt-load-lessons.md](./docs/refactor-gpt-load-lessons.md)。环境变量名未变，密钥只从 `AI_API_KEY` 读取，不要写入仓库。
 
 维护项目精力有限, 仅保证对 Chrome 浏览器的支持。如果测试了其他浏览器可以 Pull Request。
 
