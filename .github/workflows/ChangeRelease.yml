@@ -1,11 +1,12 @@
 name: ChangeRelease
+# Disabled: this fork publishes releases via `gh release` / tags.
+# dropseed/changerelease fails on historical CHANGELOG versions that have no git tags.
 on:
   workflow_dispatch: {}
-  push:
-    tags: ["*"]
 
 jobs:
   sync:
+    if: false
     runs-on: ubuntu-latest
     steps:
     - uses: dropseed/changerelease@v1
