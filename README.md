@@ -90,7 +90,6 @@ QD [v20261002] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 
 [MIT](https://fastly.jsdelivr.net/gh/qd-today/qd@master/LICENSE) 许可协议
 
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fqd-today%2Fqd.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fqd-today%2Fqd?ref=badge_large)
 
 致谢
 ===========
