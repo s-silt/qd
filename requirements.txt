@@ -8,7 +8,7 @@
 --extra-index-url https://pypi.org/simple
 aiofiles==24.1.0; python_version >= '3.8'
 aiohappyeyeballs==2.6.1; python_version >= '3.9'
-aiohttp==3.14.3; python_version >= '3.9'
+aiohttp==3.14.4; python_version >= '3.9'
 aiomysql==0.3.0; python_version >= '3.7'
 aiosignal==1.4.0; python_version >= '3.9'
 aiosqlite==0.21.0; python_version >= '3.9'
