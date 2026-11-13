@@ -10,16 +10,15 @@ LABEL org.opencontainers.image.source=https://github.com/qd-today/qd
 
 WORKDIR /usr/src/app
 
+# 代码直接用构建上下文（.dockerignore 已排除 .git 等），不再构建期 clone——
+# 构建期拉取会让镜像内容与仓库脱节
+COPY . /usr/src/app/
+
 # QD && Pip install modules
 RUN sed -i 's/mirrors.ustc.edu.cn/dl-cdn.alpinelinux.org/g' /etc/apk/repositories && \
     sed -i 's/edge/v3.19/g' /etc/apk/repositories && \
     sed -i '/testing/d' /etc/apk/repositories && \
     apk update && \
-    let num=$RANDOM%100+10 && \
-    sleep $num && \
-    git clone --depth 1 https://gitee.com/qd-today/qd.git /gitclone_tmp && \
-    yes | cp -rf /gitclone_tmp/. /usr/src/app && \
-    rm -rf /gitclone_tmp && \
     chmod +x /usr/src/app/update.sh && \
     ln -s /usr/src/app/update.sh /bin/update && \
     apk add --update --no-cache python3 py3-six py3-markupsafe py3-pycryptodome py3-tornado \

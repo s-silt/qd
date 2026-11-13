@@ -144,7 +144,7 @@ update_in_alpine() {
     # 安装Python3及框架依赖
     echo "https://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
     set_alpine_mirrors "${alpine_mirrors}" && \
-    apk add --update --no-cache openssh-client python3 py3-six py3-markupsafe py3-pycryptodome py3-tornado py3-wrapt \
+    apk add --update --no-cache python3 py3-six py3-markupsafe py3-pycryptodome py3-tornado py3-wrapt \
     py3-packaging py3-greenlet py3-urllib3 py3-cryptography py3-aiosignal py3-async-timeout py3-attrs py3-frozenlist \
     py3-multidict py3-charset-normalizer py3-aiohttp py3-typing-extensions py3-yarl && \
     if [ "$(printenv QIANDAO_LITE)" ] && [ "${QIANDAO_LITE}" = "True" ];then
@@ -212,7 +212,62 @@ update_version() {
     fi
 }
 
+have_git() {
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+# 列出远端版本 tag：有 .git 用 git ls-remote，否则查 gitee API（公共仓库无需 token）
+list_remote_tags() {
+    if have_git; then
+        git ls-remote --tags origin | grep -o 'refs/tags/[0-9]*' | grep -o '[^\/]*$'
+    else
+        wget -qO- "https://gitee.com/api/v5/repos/qd-today/qd/tags?per_page=100" \
+            | grep -o '"name": *"[0-9][0-9.]*"' | grep -o '[0-9][0-9.]*'
+    fi
+}
+
+# 无 .git 时的代码更新：下载归档包覆盖代码，config/ 是挂载点不能动
+update_tarball() {
+    tmp=$(mktemp -d)
+    # gitee 会间歇限流，GitHub tarball API 优先，回退 gitee；每个源试两次
+    _ok=0
+    for _base in \
+        "https://api.github.com/repos/qd-today/qd/tarball/${remoteversion}" \
+        "https://gitee.com/qd-today/qd/repository/archive/${remoteversion}.tar.gz"; do
+        for _try in 1 2; do
+            echo "Info: 下载 ${_base}（第 ${_try} 次）"
+            if wget -qO- --timeout=120 "${_base}" 2>/dev/null | tar xz -C "${tmp}" 2>/dev/null; then
+                _ok=1
+                break
+            fi
+            sleep 3
+        done
+        [ "$_ok" = "1" ] && break
+    done
+    if [ "$_ok" != "1" ]; then
+        echo "Error: 下载或解压失败: ${remoteversion}" >&2
+        rm -rf "${tmp}"
+        return 1
+    fi
+    src=$(find "${tmp}" -maxdepth 1 -mindepth 1 -type d | head -n 1)
+    if [ -z "${src}" ]; then
+        echo "Error: 归档内容为空"
+        rm -rf "${tmp}"
+        return 1
+    fi
+    # config/ 是 VOLUME 挂载点：不能删也不该被归档覆盖，归档里的 config 直接丢弃
+    rm -rf "${src}/config"
+    cp -a "${src}/." "${_dir}/"
+    chmod +x "${_dir}/update.sh" 2>/dev/null || true
+    rm -rf "${tmp}"
+}
+
 update_git() {
+    # 镜像内没有 .git（构建期 COPY 源码）时走归档包更新
+    if ! have_git; then
+        update_tarball
+        return
+    fi
     if [ "${remoteversion}" = ${source_branch} ];then
         git fetch --all && \
         git reset --hard origin/"${remoteversion}" && \
@@ -239,7 +294,7 @@ update() {
             echo -e "Info: 更新完成! \nInfo: 当前版本: ${remoteversion}" && \
             echo_auto_reload
         else
-            if git ls-remote --tags origin | grep -o 'refs/tags/[0-9]*' | grep -o '[^\/]*$' | grep -q -w "$1"
+            if list_remote_tags | grep -q -w "$1"
             then
                 remoteversion="$1"
                 if [ "$(echo "$localversion" "$remoteversion" | awk '$1>$2 {print 0} $1=<$2 {print 1}')" == 0 ];then
@@ -281,7 +336,7 @@ update() {
         fi
     else
         # 默认更新至最新Tag版本
-        remoteversion=$(git ls-remote --tags origin | grep -o 'refs/tags/[0-9]*' | sort -r | head -n 1 | grep -o '[^\/]*$')
+        remoteversion=$(list_remote_tags | sort -r | head -n 1)
         if [ "$(echo "$localversion" "$remoteversion" | awk '$1>=$2 {print 0} $1<$2 {print 1}')" == 1 ];then
             echo -e "Info: 当前版本: $localversion \nInfo: 新版本: $remoteversion \nInfo: 正在更新中, 请稍候..."
             update_version "${remoteversion}" && \
@@ -326,7 +381,7 @@ while true; do
 
         -l | --local ) get_localversion; echo "当前版本: ${localversion}"; shift ;;
 
-        -r | --remote ) echo "远程版本: $(git ls-remote --tags origin | grep -o 'refs/tags/[0-9]*' | sort -r | head -n 1 | grep -o '[^\/]*$')"; shift ;;
+        -r | --remote ) echo "远程版本: $(list_remote_tags | sort -r | head -n 1)"; shift ;;
 
         -- ) shift; break ;;
         * ) echo "Error: internal error!" ; exit 1 ;;
