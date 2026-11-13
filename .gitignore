@@ -195,3 +195,8 @@ alembic.ini
 
 # Claude Code agent worktrees (local agent isolation, do not commit)
 .claude/
+# SSH private keys must never be committed
+*.pem
+id_rsa
+id_ed25519
+*.key
