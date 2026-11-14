@@ -14,7 +14,7 @@ These cover the audit findings assigned to the *handlers* file group:
             and dumps every email/IP).
   [E #33]   destructive log wipes must be POST (no <img src> GET CSRF) and still
             enforce ownership.
-  [P1 #15]  HARAIAnalyze.post -> reject oversized HAR by bytes before json.loads
+  [P1 #15]  WorkbenchAuthor.post -> reject oversized HAR by bytes before json.loads
             and offload CPU-bound preprocess off the IOLoop thread.
 
 The handler coroutines are exercised directly (real check_permission /
@@ -29,7 +29,7 @@ from tornado.web import HTTPError
 
 import web.handlers.task as task_mod
 import web.handlers.user as user_mod
-import web.handlers.har as har_mod
+import web.handlers.ai_workbench as workbench_mod
 from web.handlers.task import (
     TaskSetTimeHandler,
     TaskLogDelHandler,
@@ -38,7 +38,7 @@ from web.handlers.task import (
     TasksDelHandler,
 )
 from web.handlers.user import UserManagerHandler
-from web.handlers.har import HARAIAnalyze
+from web.handlers.ai_workbench import WorkbenchAuthor
 
 
 # --------------------------------------------------------------------------- #
@@ -352,83 +352,47 @@ async def test_usermanage_get_admin_lists_users():
 
 
 # --------------------------------------------------------------------------- #
-# [P1 #15] HARAIAnalyze byte limit + executor offload
+# [P1 #15] Workbench HAR upload guard
 # --------------------------------------------------------------------------- #
-class _EnabledClient:
-    enabled = True
-    model = "test-model"
-
-    def __init__(self, *a, **kw):
-        pass
+def workbench_upload(body):
+    request = FakeRequest(body=body)
+    request.headers.update({"Content-Type": "application/json", "X-QD-Workbench": "1"})
+    handler = make_handler(WorkbenchAuthor, FakeDB(), OWNER, request)
+    handler.set_header = lambda *args: None
+    return handler
 
 
 async def test_har_upload_rejected_when_too_large(monkeypatch):
-    monkeypatch.setattr(har_mod.ai_client, "AIClient", _EnabledClient)
-    called = {"analyze": False}
+    async def unexpected(*args):
+        pytest.fail("oversize request reached the authoring engine")
 
-    async def _spy(*a, **kw):
-        called["analyze"] = True
-        return {}
-
-    monkeypatch.setattr(har_mod, "_analyze_har_with_ai", _spy)
-
-    limit = har_mod.HAR_UPLOAD_MAX_BYTES
-    big = b'{"log": "' + b"a" * (limit + 1) + b'"}'
-    db = FakeDB()
-    h = make_handler(HARAIAnalyze, db, OWNER, FakeRequest(body=big))
-    await h.post()
-    assert getattr(h, "_status_code", None) == 413
-    assert called["analyze"] is False, "must reject by bytes before any AI work"
+    monkeypatch.setattr(workbench_mod, "author_template", unexpected)
+    handler = workbench_upload(b" " * (workbench_mod.AUTHORING_BODY_LIMIT + 1))
+    with pytest.raises(HTTPError) as rejection:
+        await handler.post()
+    assert rejection.value.status_code == 413
 
 
-async def test_har_upload_small_reaches_analyze(monkeypatch):
-    monkeypatch.setattr(har_mod.ai_client, "AIClient", _EnabledClient)
-    captured = {}
+@pytest.mark.parametrize("padding", [0, 33000])
+async def test_har_upload_parses_and_reaches_active_workbench(monkeypatch, padding):
+    event_loop_thread = threading.get_ident()
+    decode = json.loads
+    seen = []
 
-    async def _spy(har, hint):
-        captured["har"] = har
-        return {"har": [], "result": {}, "stats": {"input_entries": 0}}
+    def decode_in_test(body):
+        seen.append(threading.get_ident())
+        return decode(body)
 
-    monkeypatch.setattr(har_mod, "_analyze_har_with_ai", _spy)
+    async def author(har, site, client):
+        assert har == {"log": {"entries": []}}
+        assert site == "https://example.test"
+        return {"steps": []}
 
-    db = FakeDB()
-    body = json.dumps({"har": {"log": {"entries": []}}, "hint": ""}).encode()
-    h = make_handler(HARAIAnalyze, db, OWNER, FakeRequest(body=body))
-    await h.post()
-    assert captured.get("har") == {"log": {"entries": []}}
-
-
-async def test_preprocess_har_runs_off_event_loop_thread(monkeypatch):
-    """[#15] CPU-bound prepare (analyze_har) must run in an executor, not block the IOLoop."""
-    main_thread = threading.get_ident()
-    seen = {}
-
-    def fake_analyze(har, hint="", max_entries=None):
-        seen["thread"] = threading.get_ident()
-        return {
-            "entries": [{"dummy": 1}],
-            "messages": [],
-            "stats": {"input_entries": 1},
-        }
-
-    monkeypatch.setattr(har_mod.ai_client, "analyze_har", fake_analyze)
-    monkeypatch.setattr(har_mod.ai_client, "parse_ai_response", lambda c: {})
-    monkeypatch.setattr(
-        har_mod.ai_client,
-        "apply_ai_result",
-        lambda r, allowed_hosts=None: {"har": [], "warnings": [], "result": r},
-    )
-
-    class _Client:
-        enabled = True
-        model = "m"
-
-        async def chat(self, messages, temperature=0.1):
-            return "{}"
-
-    monkeypatch.setattr(har_mod.ai_client, "AIClient", lambda *a, **k: _Client())
-
-    out = await har_mod._analyze_har_with_ai({"log": {"entries": []}}, "")
-    assert "thread" in seen
-    assert seen["thread"] != main_thread, "analyze_har must run off the event-loop thread"
-    assert out["stats"]["input_entries"] == 1
+    monkeypatch.setattr(workbench_mod, "author_template", author)
+    monkeypatch.setattr(workbench_mod.ai_client, "AIClient", lambda: None)
+    encoded = json.dumps({"har": {"log": {"entries": []}}, "site": "https://example.test"}).encode()
+    monkeypatch.setattr(workbench_mod.json, "loads", decode_in_test)
+    handler = workbench_upload(encoded + b" " * padding)
+    await handler.post()
+    assert handler._finish_calls[0][0][0] == {"steps": []}
+    assert len(seen) == 1 and (seen[0] != event_loop_thread) == bool(padding)

@@ -1,48 +1,35 @@
 {% extends "base.html" %}
+{% import "signin_header.html" as signin %}
 
-{% block title %}QD 日志{% endblock %}
+{% block title %}任务执行日志 · QD{% endblock %}
+{% block viewport %}width=device-width, initial-scale=1{% endblock %}
 
-{% block header %}
+{% block head %}
 {{ super() }}
-<link href="{{ static_url('css/my.css') }}" rel="stylesheet" type="text/css">
-<style>
-  .log-filter-bar {
-    margin-bottom: 15px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .log-row-success {
-    background-color: rgba(92, 184, 92, 0.04);
-  }
-  .log-row-fail {
-    background-color: rgba(217, 83, 79, 0.05);
-  }
-</style>
+<link href="{{ static_url('css/signin_shell.css') }}" rel="stylesheet">
+<link href="{{ static_url('css/tasklog.css') }}" rel="stylesheet">
 {% endblock %}
 
 {% block body %}
-{{ utils.header(current_user, title="QD日志", sup=False) }}
-
-<section>
-  <div class="container">
-    <h2>
-      任务执行日志
+<a class="qd-skip" href="#qd-main">跳到主要内容</a>
+<div class="qd-shell qd-tasklog">
+  {{ signin.header("任务执行日志") }}
+  <main id="qd-main" class="panel qd-panel" tabindex="-1">
+    <div class="qd-panel-head">
+      <h2 id="log-title">任务记录</h2>
       <a class="btn btn-danger btn-sm" data-method="POST" data-confirm="确定清空该任务的所有日志吗？" href="/task/{{ task.id }}/log/del" title="清空任务日志">
-        <i class="fa fa-trash-o"></i> 清空全量日志
+        <i class="fa fa-trash-o" aria-hidden="true"></i> 清空全量日志
       </a>
-    </h2>
+    </div>
     {% if task.browser_state == browser_verify %}
     <p class="alert alert-warning">站点要求重新验证。<a class="alert-link" href="/ai-workbench/?task={{ task.id }}">打开工作台恢复任务</a></p>
     {% endif %}
 
     <div class="log-filter-bar well well-sm">
       <div class="form-inline">
-        <div class="input-group input-group-sm" style="max-width: 260px;">
-          <span class="input-group-addon">保留最近</span>
-          <input type="number" min="1" id="day" class="form-control" placeholder="天数" style="text-align: center;" oninput="value=value.replace(/[^\d]/g,'')">
+        <div class="input-group input-group-sm">
+          <label for="day" class="input-group-addon">保留最近</label>
+          <input type="number" min="1" id="day" class="form-control" placeholder="天数" oninput="value=value.replace(/[^\d]/g,'')">
           <span class="input-group-addon">天</span>
           <span class="input-group-btn">
             <button type="button" class="btn btn-warning" onclick="deldaylog()" title="删除指定天数之前的日志">清理历史</button>
@@ -50,32 +37,33 @@
         </div>
       </div>
 
-      <div class="btn-group btn-group-sm" id="log-filter-group">
+      <div class="qd-actions" id="log-filter-group" role="group" aria-label="按执行状态筛选">
         <button type="button" class="btn btn-default active" onclick="filterLogs('all', this)">全部 (<span id="count-all">0</span>)</button>
-        <button type="button" class="btn btn-default" onclick="filterLogs('success', this)"><span class="text-success"><i class="fa fa-check"></i> 成功</span> (<span id="count-success">0</span>)</button>
-        <button type="button" class="btn btn-default" onclick="filterLogs('fail', this)"><span class="text-danger"><i class="fa fa-times"></i> 失败</span> (<span id="count-fail">0</span>)</button>
+        <button type="button" class="btn btn-default" onclick="filterLogs('success', this)">通过 (<span id="count-success">0</span>)</button>
+        <button type="button" class="btn btn-default" onclick="filterLogs('fail', this)">未通过 (<span id="count-fail">0</span>)</button>
       </div>
     </div>
 
-    <div id="run-result" style="display: none;"></div>
+    <div id="run-result" role="status" style="display: none;"></div>
 
-    <table class="table table-hover table-striped" id="log-table">
+    <div class="qd-log-table" role="region" aria-labelledby="log-title" tabindex="0">
+    <table class="table table-hover" id="log-table">
       <thead>
         <tr>
-          <th style="width: 170px;">时间</th>
-          <th style="width: 80px; text-align: center;">状态</th>
-          <th>日志内容</th>
+          <th scope="col">时间</th>
+          <th scope="col">执行状态</th>
+          <th scope="col">签到回执与日志</th>
         </tr>
       </thead>
       <tbody>
         {% for log in tasklog | sort(reverse=True, attribute="ctime") %}
         <tr class="log-entry log-entry-{{ 'success' if log.success else 'fail' }} {{ 'log-row-success' if log.success else 'log-row-fail' }}">
-          <td style="white-space:nowrap; vertical-align: middle;">{{ format_date(log.ctime) }}</td>
-          <td style="white-space:nowrap; text-align: center; vertical-align: middle;">
+          <td class="qd-log-time">{{ format_date(log.ctime) }}</td>
+          <td>
             {% if log.success %}
-            <span class="label label-success">成功</span>
+            <span class="label label-success">执行通过</span>
             {% else %}
-            <span class="label label-danger">失败</span>
+            <span class="label label-danger">执行未通过</span>
             {% endif %}
           </td>
           <td class="autowrap showbut" id="log{{loop.index}}">
@@ -97,8 +85,10 @@
         {% endfor %}
       </tbody>
     </table>
-  </div>
-</section>
+    </div>
+    <p class="qd-actions qd-log-links"><a href="/about/">常用 API 和过滤器</a><a href="/logout">登出</a></p>
+  </main>
+</div>
 
 <script>
 function updateLogCounts() {
@@ -154,4 +144,5 @@ $(function() {
   updateLogCounts();
 });
 </script>
+{{ utils.apost() }}
 {% endblock %}

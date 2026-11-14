@@ -1,0 +1,158 @@
+{% extends "signin_shell.html" %}
+
+{% block page_title %}签到模板编辑器{% endblock %}
+{% block page_assets %}
+  <link rel="stylesheet" href="{{ static_url('css/template_editor.css') }}">
+  <script defer src="{{ static_url('components/template_editor.js') }}"></script>
+{% endblock %}
+{% block shell_class %}te-workspace{% endblock %}
+{% block shell_attributes %}
+  id="template-editor" data-template="{{ tplid or '' }}" data-owner="{{ owner }}"
+  data-workbench="{{ '1' if workbench else '0' }}"
+  data-source-name="{{ source_name }}" data-source-repo="{{ source_repo }}"
+  data-globals="{{ jinja_globals | join(',') }}" data-xsrf="{{ xsrf_token.decode('utf-8') }}"
+{% endblock %}
+{% block page_header %}{{ signin.header(self.page_title(), 'editor') }}{% endblock %}
+{% block main %}
+      <div id="te-status" class="te-status" role="status">正在加载模板…</div>
+      <div id="te-error" class="te-error" role="alert"></div>
+      <noscript><p>编辑模板需要启用 JavaScript。也可以打开高级编辑器。</p></noscript>
+      <form id="te-form" method="post" hidden>
+        <section class="panel qd-panel" aria-labelledby="te-settings-title">
+          <div class="qd-panel-head">
+            <h2 id="te-settings-title">模板信息</h2>
+            <div class="qd-actions">
+              <button class="button" id="te-import" type="button">导入 HAR</button>
+              <button class="button" id="te-download" type="button">下载模板</button>
+              <a class="button te-advanced" id="te-legacy" href="{{ request.path }}?legacy=1">高级编辑器</a>
+              <input id="te-file" type="file" accept=".har,.json,application/json" hidden aria-label="选择 HAR 文件">
+            </div>
+          </div>
+          <fieldset id="te-settings" class="te-fields">
+            <label>模板名称<input name="sitename" maxlength="128" required></label>
+            <label>网站地址<input name="siteurl" maxlength="256" spellcheck="false" placeholder="https://example.com"></label>
+            <label>执行间隔（秒）<input name="interval" type="number" min="1" max="2147483647" step="1" placeholder="留空使用默认间隔" aria-describedby="te-interval-help"></label>
+            <small id="te-interval-help">例如每天一次可填 86400。</small>
+            <label class="te-wide">备注<textarea name="note" rows="2" maxlength="1024"></textarea></label>
+          </fieldset>
+        </section>
+
+        <div class="te-step-grid">
+          <section class="panel qd-panel" aria-labelledby="te-list-title">
+            <div class="qd-panel-head">
+              <div>
+                <h2 id="te-list-title">请求步骤</h2>
+                <p id="te-step-count" class="te-muted"></p>
+              </div>
+              <button class="button" id="te-add-step" type="button">添加步骤</button>
+            </div>
+            <ol class="te-step-list" id="te-steps" aria-label="请求执行顺序"></ol>
+            <p id="te-empty" class="te-muted">先添加一个请求步骤，也可以导入 HAR 或从 AI 工作台带入草稿。</p>
+            <section class="te-binding-summary" id="te-bindings" aria-labelledby="te-bindings-title" hidden>
+              <h3 id="te-bindings-title">自动带入的参数</h3>
+              <ul></ul>
+            </section>
+          </section>
+
+          <section class="panel qd-panel" id="te-step-panel" aria-labelledby="te-step-title" hidden>
+            <div class="qd-panel-head">
+              <h2 id="te-step-title" tabindex="-1">编辑步骤</h2>
+              <div class="qd-actions">
+                <button class="button" id="te-up" type="button">上移</button>
+                <button class="button" id="te-down" type="button">下移</button>
+                <button class="button" id="te-remove-step" type="button">删除步骤</button>
+              </div>
+            </div>
+            <fieldset id="te-step-fields" class="te-fields">
+              <label class="te-wide">步骤说明<input name="comment" maxlength="1024" placeholder="例如：提交签到"></label>
+              <label>方法<input name="method" list="te-methods" autocomplete="off" spellcheck="false"></label>
+              <datalist id="te-methods">
+                <option value="GET"><option value="POST"><option value="PUT"><option value="PATCH">
+                <option value="DELETE"><option value="HEAD"><option value="OPTIONS">
+              </datalist>
+              <label>内容类型<input name="mime" list="te-mimes" autocomplete="off" spellcheck="false" placeholder="application/json"></label>
+              <datalist id="te-mimes">
+                <option value="application/json"><option value="application/x-www-form-urlencoded">
+                <option value="text/plain">
+              </datalist>
+              <label class="te-wide">请求地址<input name="url" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="https://example.com/api/checkin"></label>
+              <label class="te-wide">请求正文<textarea name="body" rows="3" spellcheck="false" placeholder="没有正文可以留空"></textarea></label>
+              <label class="te-wide te-receipt-option">
+                <input type="checkbox" name="signin_receipt" aria-describedby="te-receipt-help">把签到回执写入任务历史
+              </label>
+              <small id="te-receipt-help">记录站点明确返回的结果和积分等字段。</small>
+            </fieldset>
+
+            <details class="te-details" id="te-rules">
+              <summary>成功条件和变量提取 <span id="te-rule-count" class="te-muted"></span></summary>
+              <div class="te-extra">
+                <section aria-labelledby="te-success-title">
+                  <h3 id="te-success-title">何时算签到成功</h3>
+                  <p class="te-muted">填写成功时才会出现在响应正文里的文字。</p>
+                  <div class="te-literal-rule">
+                    <label>响应包含的文字<input id="te-success-text" type="text" autocomplete="off" spellcheck="false" data-te-mutable></label>
+                    <button class="button" id="te-add-success-text" type="button" data-te-mutable>添加文字条件</button>
+                  </div>
+                  <div id="te-success"></div>
+                  <button class="button te-add-row" data-group="success_asserts" type="button">添加正则条件</button>
+                </section>
+                <section aria-labelledby="te-failed-title">
+                  <h3 id="te-failed-title">何时应报告失败</h3>
+                  <p class="te-muted">例如返回“未登录”或“签到失败”。</p>
+                  <div id="te-failed"></div>
+                  <button class="button te-add-row" data-group="failed_asserts" type="button">添加失败条件</button>
+                </section>
+                <section aria-labelledby="te-extract-title">
+                  <h3 id="te-extract-title">给后续请求提取变量</h3>
+                  <p class="te-muted">给匹配结果取名，后续步骤可用 <code>{% raw %}{{变量名}}{% endraw %}</code> 引用。</p>
+                  <div id="te-extract"></div>
+                  <button class="button te-add-row" data-group="extract_variables" type="button">添加提取规则</button>
+                </section>
+              </div>
+            </details>
+
+            <details class="te-details" id="te-request-options">
+              <summary>请求头和 Cookie</summary>
+              <div class="te-extra">
+                <section aria-labelledby="te-headers-title">
+                  <h3 id="te-headers-title">请求头</h3>
+                  <div id="te-headers"></div>
+                  <button class="button te-add-row" data-group="headers" type="button">添加请求头</button>
+                </section>
+                <section aria-labelledby="te-cookies-title">
+                  <h3 id="te-cookies-title">Cookie</h3>
+                  <div id="te-cookies"></div>
+                  <button class="button te-add-row" data-group="cookies" type="button">添加 Cookie</button>
+                </section>
+              </div>
+            </details>
+          </section>
+        </div>
+
+        <section class="panel qd-panel" aria-labelledby="te-trial-title">
+          <h2 id="te-trial-title">试跑与保存</h2>
+          <p class="te-muted" id="te-trial-help">试跑会发送勾选的请求。试跑参数只用于本次编辑，保存模板时不会写入。</p>
+          <fieldset id="te-variables" class="te-fields" aria-label="试跑参数"></fieldset>
+          <p id="te-no-variables" class="te-muted" hidden>当前步骤无需手动填写参数。</p>
+          <div class="qd-actions te-main-actions">
+            <button class="button" id="te-trial" type="button">试跑所选步骤</button>
+            <button class="primary" id="te-save" type="submit">保存模板</button>
+          </div>
+          <div id="te-trial-result" class="te-result" role="status" hidden></div>
+          <button class="button" id="te-failed-step" type="button" hidden>查看失败步骤</button>
+          <section class="te-trace" id="te-trial-trace" aria-labelledby="te-trace-title" hidden>
+            <div class="qd-panel-head">
+              <h3 id="te-trace-title">试跑日志</h3>
+              <p class="te-muted te-trace-time"><time id="te-trace-time"></time><span id="te-trace-duration" hidden></span></p>
+            </div>
+            <dl class="te-trace-details" id="te-receipt-details" hidden></dl>
+            <section id="te-template-log" aria-labelledby="te-template-log-title" hidden>
+              <h4 id="te-template-log-title">模板提取</h4>
+              <dl class="te-trace-details"></dl>
+            </section>
+            <p class="te-muted" id="te-trace-omitted" hidden></p>
+            <ol class="te-trace-steps" id="te-trial-steps" role="list" hidden></ol>
+          </section>
+        </section>
+      </form>
+{% endblock %}

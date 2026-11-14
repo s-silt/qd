@@ -53,35 +53,17 @@ docker run -d --name qd -p 8923:80 -v $(pwd)/qd/config:/usr/src/app/config --ENV
 
 ## AI 功能相关
 
-### AI 智能识别签到不工作？
+### 工作台显示「模型待配置」或分析失败？
 
-1. 检查 `AI_API_KEY` 环境变量是否设置
-2. 访问 `http://your-qd-host:8923/har/ai_status` 检查状态
-3. 确认 `AI_BASE_URL` 可访问
-4. 检查日志中的错误信息
+检查 QD 的 `AI_BASE_URL`、`AI_MODEL`、`AI_API_KEY` 和服务日志。重新打开 `/ai-workbench/` 确认页面显示已配置的模型。实际选择「分析记录」，即可验证 QD 能否调用服务。
 
-### AI 生成的模板签到返回 duplicate 但显示失败？
+### 试跑完成但没有确认签到？
 
-AI 生成的模板已自动处理重复签到（包含 duplicate/already/已签到 关键字）。如果仍有问题：
+展开模板编辑器里的「试跑与保存」，检查成功和失败条件、各步骤日志以及站点回执。站点响应需要明确返回签到结果，单独的 HTTP 200 无法确认业务成功。站点页面确实有结果、但 HAR 中缺少相关请求时，可重新录制一次。
 
-1. 重新运行 AI 分析
-2. 手动在 `success_asserts` 中添加 `duplicate|already|已签到` 关键字
-3. 确保 `failed_asserts` 中没有包含这些关键字
+### QD 在线录制打不开或 Chromium 崩溃？
 
-### 点「应用到当前模板」按钮没反应？
-
-1. 确保 AI 分析已完成并显示了结果
-2. 刷新页面后重试
-3. 检查浏览器控制台是否有错误
-
-## Playwright 自动抓包相关
-
-### 自动抓包报错 / Chromium 崩溃？
-
-1. Docker 部署确保设置了 `shm_size: 1gb`
-2. 源码部署确保已安装 `playwright install chromium`
-3. 减少 `PLAYWRIGHT_MAX_CONCURRENT` 为 1
-4. 检查系统内存是否充足（建议 2GB+）
+确认已启用 `AI_WORKBENCH_BROWSER=true`，并安装 Chromium。Docker 部署可检查 `shm_size` 和内存。若站点在 QD 浏览器中持续要求验证，请改用桌面浏览器手动登录签到后导入脱敏 HAR。详见 [QD 在线录制](./auto-capture.md)。
 
 ### Cookie 获取页面打不开？
 

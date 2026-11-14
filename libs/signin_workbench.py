@@ -1,12 +1,16 @@
-"""Human-operated browser sessions and bounded, credential-free capture summaries."""
+"""Browser recording, replay and credential-free capture summaries."""
 
 import asyncio
+import hashlib
+import json
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
+import config
 from libs import playwright_capture
 from libs.browser_egress import BrowserEgress, public_addresses
 from libs.button_finder import JS_FIND_CANDIDATES
@@ -16,6 +20,9 @@ SESSION_SECONDS = 600
 MAX_RECORDS = 60
 MAX_STEPS = 6
 MAX_SESSION_BYTES = 2 * 1024 * 1024
+EXAMPLE_KEYS = {
+    hashlib.sha256(value).digest() for value in (b"binux", b"please-change-to-a-long-random-string")
+}
 AUTH_FIELD = re.compile(
     r"(?i)pass(?:word|wd)?|cookie|authorization|secret|credential|session|token|csrf|"
     r"otp|captcha|sms|(?:^|[_-])(?:pin|code|phone|mobile|email|account|username|key)(?:$|[_-])"
@@ -23,6 +30,20 @@ AUTH_FIELD = re.compile(
 AUTH_PATH = re.compile(
     r"(?i)(?:^|[/_.-])(?:login|log[-_]?in|logout|sign[-_]in|auth|oauth\w*|sso|passport|"
     r"captcha|verify|verification|challenge|sms|otp|qrconnect)(?:$|[/_.-])"
+)
+_PUBLIC_PLUGIN_PATH = re.compile(r"/(?:[a-zA-Z][a-zA-Z0-9_-]{0,39}/){0,5}plugin\.php")
+_PUBLIC_TASK_LANDING = re.compile(r"/(?:[a-zA-Z][a-zA-Z0-9_-]{0,39}/){0,5}home\.php")
+_PUBLIC_PLUGIN_ID = re.compile(r"[a-zA-Z][a-zA-Z0-9_-]{0,39}(?::[a-zA-Z][a-zA-Z0-9_-]{0,39})?")
+_PUBLIC_ROUTE_KEY = frozenset({"id", "mod", "action", "do", "plugin", "page"})
+_PUBLIC_SIGNIN_WORD = re.compile(
+    r"(?:^|[_-])(?:check[-_]?in|attendance|qiandao|sign|qd|punch)(?:$|[_-])", re.I
+)
+_PUBLIC_SIGNIN_ROUTE = frozenset({"attendance", "check-in", "check_in", "checkin", "punch", "qiandao", "sign"})
+_PUBLIC_ROUTING_VALUE = _PUBLIC_SIGNIN_ROUTE | {"action", "daily", "index", "qd"}
+_PRIVATE_ROUTE_WORD = re.compile(
+    r"(?:^|[:/_.-])(?:security|challenge|verification|authenticat\w*|authorize|register|reset|"
+    r"passwd|password|session|token|secret|credential|cookie|captcha|csrf|turnstile|recaptcha|"
+    r"hcaptcha|geetest)(?:$|[:/_.-])", re.I
 )
 SIGNIN_PATH = re.compile(r"(?i)check[-_]?in|attendance|qiandao|daily[-_]?sign|punch|签到|打卡")
 VERIFICATION_FRAME = re.compile(r"(?i)captcha|challenge|qrconnect|open\.weixin\.qq\.com|recaptcha|turnstile")
@@ -35,13 +56,21 @@ CHALLENGE = re.compile(
     r"captcha required|login required|unauthori[sz]ed|token expired",
     re.I,
 )
+CLOUDFLARE_VERIFICATION = re.compile(
+    r"performing\s+security\s+verification.{0,600}verifies\s+you\s+are\s+not\s+a\s+bot",
+    re.I | re.S,
+)
 SUCCESS = re.compile(
     r"签到成功|(?<!未)(?:已签到|已经签到)|重复签到|打卡成功|(?<!未)已打卡|checked\s*in|already\s+checked",
     re.I,
 )
 CLICK_CANDIDATE = re.compile(
-    r"^(?:立即|每日|今日|去|点击)?(?:签到|打卡)(?:领取奖励)?$|^(?:daily )?check[ -]?in$", re.I
+    r"(?:立即|每日|今日|去|点击)?(?:签到|打卡)|(?:开始|继续)(?:签到|打卡)(?:任务)?|"
+    r"(?:daily )?check[ -]?in|(?:start|continue) (?:daily )?check[ -]?in",
+    re.I,
 )
+CLAIM_CHECKIN = re.compile(r"领取(?:签到|打卡)奖励|(?:签到|打卡)领取奖励|claim check[ -]?in reward", re.I)
+AUTO_NO_BUTTON = "没有可明确识别的签到按钮"
 GOTO_TIMEOUT = 15000
 _replay_slots = asyncio.Semaphore(max(1, playwright_capture.PLAYWRIGHT_MAX_CONCURRENT))
 _browser_lock = asyncio.Lock()
@@ -55,6 +84,22 @@ class WorkbenchError(Exception):
 
 class VerificationNeeded(WorkbenchError):
     pass
+
+
+class WorkbenchPermissionError(WorkbenchError):
+    def __init__(self, status_code=403, message="没有权限"):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def browser_enabled():
+    return (
+        config.ai_workbench_browser
+        and not config.multiprocess
+        and playwright_capture.is_available()
+        and config.cookie_secret not in EXAMPLE_KEYS
+        and config.aes_key not in EXAMPLE_KEYS
+    )
 
 
 def web_origin(url):
@@ -150,9 +195,10 @@ def credentials_in_chat(text):
 
 def validate_steps(origin, start_url, steps):
     """The replay script consists of observed clicks, never model-provided code."""
-    if not can_record(origin, start_url):
-        raise WorkbenchError("请登录后打开站点内不带查询参数的签到页面，再开始录制")
-    if not steps or len(steps) > MAX_STEPS:
+    error = _recording_url_error(origin, start_url)
+    if error:
+        raise WorkbenchError(error)
+    if not isinstance(steps, list) or not steps or len(steps) > MAX_STEPS:
         raise WorkbenchError("请录制 1 到 6 次签到相关点击")
     if not all(
         isinstance(step, dict)
@@ -165,11 +211,75 @@ def validate_steps(origin, start_url, steps):
         raise WorkbenchError("签到操作中有无法回放的点击")
 
 
-def can_record(origin, url):
+def validate_script(script):
+    if not isinstance(script, dict) or not {"origin", "url", "steps"} <= script.keys():
+        raise WorkbenchError("签到脚本格式无效")
+    validate_steps(script["origin"], script["url"], script["steps"])
+    labels = script.get("labels")
+    if labels is not None and (
+        not isinstance(labels, list) or len(labels) != len(script["steps"])
+        or not all(isinstance(label, str) and len(label) <= 80 for label in labels)
+    ):
+        raise WorkbenchError("签到脚本的步骤说明格式无效")
+    return script
+
+
+def is_public_signin_query(path, query):
+    """Recognize supported public routing on forum sign-in and task landing pages."""
+    if not query or len(query) > 256:
+        return False
+    if AUTH_PATH.search(path) or _PRIVATE_ROUTE_WORD.search(path):
+        return False
+    if query == "mod=task" and _PUBLIC_TASK_LANDING.fullmatch(path):
+        return True
+    if not _PUBLIC_PLUGIN_PATH.fullmatch(path):
+        return False
+    seen = set()
+    for part in query.split("&"):
+        key, sep, raw = part.partition("=")
+        if not sep or key in seen or key not in _PUBLIC_ROUTE_KEY:
+            return False
+        if key == "id":
+            value = re.sub(r"%3[aA]", ":", raw)
+            if (
+                not _PUBLIC_PLUGIN_ID.fullmatch(value) or _PRIVATE_ROUTE_WORD.search(value)
+                or AUTH_PATH.search(value.replace(":", "/"))
+            ):
+                return False
+            module, _, route = value.lower().partition(":")
+            if route and route not in _PUBLIC_ROUTING_VALUE:
+                return False
+            if not _PUBLIC_SIGNIN_WORD.search(module) and route not in _PUBLIC_SIGNIN_ROUTE:
+                return False
+            if AUTH_FIELD.search(module) or SENSITIVE_VALUE.search(module) or re.search(r"[a-z0-9]{21}|\d{4}", module):
+                return False
+        elif raw not in _PUBLIC_ROUTING_VALUE:
+            return False
+        seen.add(key)
+    return "id" in seen
+
+
+def _recording_url_error(origin, url):
+    try:
+        actual = web_origin(url)
+    except ValueError:
+        return "请在浏览器里打开有效的签到页面，再开始录制"
+    same = origin == actual or (
+        isinstance(origin, str) and origin.startswith("http://") and actual == "https://" + origin[7:]
+    )
+    if not same:
+        return "请回到最初打开的网站，再从该站点的签到页面开始录制"
     parsed = urlsplit(url)
-    actual = web_origin(url)
-    same = origin == actual or origin.startswith("http://") and actual == "https://" + origin[7:]
-    return same and not parsed.query and not AUTH_PATH.search(parsed.path)
+    path = unquote(parsed.path)
+    if AUTH_PATH.search(path) or _PRIVATE_ROUTE_WORD.search(path):
+        return "请在浏览器里完成登录和验证，再打开签到页面开始录制"
+    if parsed.query and not is_public_signin_query(parsed.path, parsed.query):
+        return "此页面带有工作台无法保存的网址参数。请从网站菜单打开普通签到页，再开始录制"
+    return ""
+
+
+def can_record(origin, url):
+    return not _recording_url_error(origin, url)
 
 
 @dataclass
@@ -183,6 +293,7 @@ class Recording:
     success: bool = False
     initial_success: str = ""
     invalid: bool = False
+    auto_started: bool = False
 
 
 class PageVerification(VerificationNeeded):
@@ -208,8 +319,8 @@ async def challenge_visible(page):
                 if bounds and bounds["width"] >= 120 and bounds["height"] >= 90:
                     return True
     # Visible challenge text near the top or in a dialog. The text never leaves QD.
-    text = await page.locator("body").inner_text(timeout=2500)
-    return bool(CHALLENGE.search(text[:2200]))
+    text = (await page.locator("body").inner_text(timeout=2500))[:2200]
+    return bool(CHALLENGE.search(text) or CLOUDFLARE_VERIFICATION.search(text))
 
 
 async def success_signal(page):
@@ -301,6 +412,7 @@ def _record_response(recording, response):
     if summary is None:
         recording.blocked += 1
     elif len(recording.summaries) < MAX_RECORDS:
+        summary["after_action"] = len(recording.steps)
         recording.summaries.append(summary)
     if response.status in (401, 403) and (request.method == "POST" or (summary and summary["signin_hint"])):
         recording.needs_verification = True
@@ -331,6 +443,29 @@ el => ({
 })
 """
 
+_AUTO_TARGET = """
+el => ({
+  link: el.matches('a[href]') ? {url: el.href, target: el.target} : null,
+  form: el.form && el.type === 'submit' ? {
+    url: el.hasAttribute('formaction') ? el.formAction : el.form.action,
+    target: el.hasAttribute('formtarget') ? el.formTarget : el.form.target,
+  } : null,
+  baseTarget: document.querySelector('base[target]')?.target || '',
+  disabled: Boolean(el.closest('[inert], [aria-disabled="true"]')),
+  download: el.hasAttribute('download'),
+})
+"""
+
+_AUTO_PROGRESS = r"""
+({selector, text, url}) => {
+  if (location.href !== url) return true;
+  const el = document.querySelector(selector);
+  if (!el || !el.getClientRects().length || getComputedStyle(el).visibility === 'hidden') return true;
+  const current = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim();
+  return current.replace(/\s+/g, ' ') !== text;
+}
+"""
+
 
 async def recorded_click(page, selector, origin):
     target = await page.locator(selector).evaluate(_FIND_TARGET, timeout=2500)
@@ -348,6 +483,8 @@ class BrowserSession:
         self.owner = owner
         self.start_url = start_url
         self.taskid = taskid
+        self.templateid = None
+        self.template_script = None
         self.lock = asyncio.Lock()
         self.expires = None
         self.context_manager = None
@@ -357,15 +494,24 @@ class BrowserSession:
         self.captured = None
         self.draft = None
         self.saved = None
+        self.created_task = None
         self.buttons = set()
+        self.last_frame_at = 0.0
+        self.frame_cache = None
+        self.frame_page = None
+        self.verification_probe = None
 
     async def open(self, state=None):
         self.context_manager = isolated_browser(storage_state=state)
         self.context = await self.context_manager.__aenter__()
-        self.page = await self.context.new_page()
-        self.context.on("page", self._new_tab)
-        self.context.on("response", self._on_response)
-        await self.goto(self.start_url)
+        try:
+            self.page = await self.context.new_page()
+            self.context.on("page", self._new_tab)
+            self.context.on("response", self._on_response)
+            await self.goto(self.start_url)
+        except BaseException:
+            await self.close()
+            raise
 
     def _new_tab(self, page):
         self.page = page
@@ -413,32 +559,140 @@ class BrowserSession:
             raise VerificationNeeded("此页面仍需要验证。请完成验证并打开签到页面")
         url = urlsplit(page.url)
         start_url = url._replace(fragment="").geturl()
+        error = _recording_url_error(web_origin(self.start_url), start_url)
+        if error:
+            raise WorkbenchError(error)
         origin = web_origin(start_url)
-        if not can_record(web_origin(self.start_url), start_url):
-            raise WorkbenchError("请登录后打开原站点内不带查询参数的签到页面，再开始录制")
         self.recording = Recording(origin, start_url, initial_success=await success_signal(page))
         self.draft = self.captured = None
         self.saved = None
+        self.created_task = None
 
-    async def auto_click(self):
+    async def _check_auto_page(self, page, *, probe=True):
+        recording = self.recording
+        if recording.needs_verification:
+            self.recording = None
+            raise VerificationNeeded("站点要求再次登录或验证。请在浏览器里完成，确认当前签到状态后再录制")
+        if recording.invalid or page.is_closed() or page_label(page.url) != recording.origin:
+            self.recording = None
+            raise WorkbenchError("签到操作打开了其他站点或标签页。请回到原站点，确认当前签到状态后再录制")
+        if probe and (await challenge_visible(page) or recording.needs_verification):
+            self.recording = None
+            raise VerificationNeeded("站点要求再次登录或验证。请在浏览器里完成，确认当前签到状态后再录制")
+
+    async def auto_click(self, page, *, confirmed, seen):
         from playwright.async_api import Error as BrowserError
 
-        page = self.active_page()
-        candidates = await page.evaluate(JS_FIND_CANDIDATES)
-        matches = [item for item in candidates if CLICK_CANDIDATE.fullmatch(item["text"].strip())]
-        if len(matches) != 1:
-            return False
-        selector = matches[0]["selector"]
-        locator = page.locator(selector)
-        if await locator.count() != 1 or not await locator.is_enabled():
-            return False
+        recording = self.recording
+        ready = []
         try:
-            step = await recorded_click(page, selector, self.recording.origin)
+            for item in await page.evaluate(JS_FIND_CANDIDATES):
+                text = " ".join(item["text"].split())
+                if CLAIM_CHECKIN.fullmatch(text) or (not confirmed and CLICK_CANDIDATE.fullmatch(text)):
+                    selector = item["selector"]
+                    if len(selector) > 420:
+                        return "签到按钮无法可靠定位"
+                    locator = page.locator(selector)
+                    if await locator.count() != 1:
+                        return "签到按钮无法唯一定位"
+                    if await locator.is_enabled():
+                        ready.append((selector, locator, text))
+                        if len(ready) > 1:
+                            return "发现多个可用的签到按钮"
+            if not ready:
+                return AUTO_NO_BUTTON
+            selector, locator, text = ready[0]
+            key = (urlsplit(page.url).path, text.casefold())
+            if key in seen:
+                return "网页仍显示已执行过的签到步骤"
+            await locator.click(trial=True, timeout=3500)
+            await self._check_auto_page(page)
+            target = await locator.evaluate(_AUTO_TARGET, timeout=2500)
+            if target["disabled"] or target["download"]:
+                return "签到按钮已变化或需要人工操作"
+            for navigation in (target["link"], target["form"]):
+                if navigation and (
+                    page_label(navigation["url"]) != recording.origin
+                    or AUTH_PATH.search(urlsplit(navigation["url"]).path)
+                    or (navigation["target"] or target["baseTarget"]).lower() not in ("", "_self")
+                ):
+                    return "签到按钮会打开其他站点、标签页或登录验证页面"
+            step = await recorded_click(page, selector, recording.origin)
+            if " ".join(step["text"].split()) != text:
+                return "签到按钮已变化或需要人工操作"
+        except BrowserError:
+            return "签到按钮已变化或需要人工操作"
+        except WorkbenchError as exc:
+            if self.recording is None:
+                raise
+            return str(exc)
+
+        seen.add(key)
+        recording.steps.append(step)
+        before = page.url
+        try:
             await locator.click(timeout=3500)
-        except (BrowserError, WorkbenchError):
-            return False
-        self.recording.steps.append(step)
-        return True
+        except BrowserError:
+            # The click may already have reached the site. Never repeat it automatically.
+            if not any(row["after_action"] == len(recording.steps) for row in recording.summaries):
+                recording.steps.pop()
+            return "浏览器未能确认最后一次点击，请先查看站点当前状态"
+        if not (recording.needs_verification or recording.invalid):
+            # A document can already be network-idle while a SPA changes its next control.
+            with suppress(BrowserError):
+                await page.wait_for_function(
+                    _AUTO_PROGRESS, arg={"selector": selector, "text": text, "url": before}, timeout=2000,
+                )
+        return ""
+
+    async def auto_record(self):
+        from playwright.async_api import Error as BrowserError
+
+        recording = self.recording
+        recording.auto_started = True
+        page = self.active_page()
+        seen = set()
+
+        async def restrict_auto(route):
+            request = route.request
+            navigation = request.is_navigation_request()
+            mutating = request.method not in ("GET", "HEAD", "OPTIONS")
+            if navigation or mutating:
+                if page_label(request.url) != recording.origin:
+                    recording.invalid = True
+                    await route.abort()
+                    return
+                if AUTH_PATH.search(unquote(urlsplit(request.url).path)):
+                    recording.needs_verification = True
+                    await route.abort()
+                    return
+            await route.fallback()
+
+        await self.context.route("**/*", restrict_auto)
+        try:
+            for _ in range(MAX_STEPS):
+                await self._check_auto_page(page)
+                signal = await success_signal(page)
+                if not recording.steps and already_checked(signal):
+                    return "页面已显示签到状态，请在当前位置核对结果或手动继续"
+                confirmed = bool(signal and (signal != recording.initial_success or already_checked(signal)))
+                reason = await self.auto_click(page, confirmed=confirmed, seen=seen)
+                if reason:
+                    await self._check_auto_page(page)
+                    if confirmed and reason == AUTO_NO_BUTTON:
+                        return ""
+                    return reason
+                await settle(page)
+            await self._check_auto_page(page)
+            signal = await success_signal(page)
+            if signal and (signal != recording.initial_success or already_checked(signal)):
+                return ""
+            return "已达到 6 步录制上限，请查看站点当前状态"
+        except BrowserError:
+            await self._check_auto_page(page, probe=False)
+            return "网页正在变化，请查看站点当前状态"
+        finally:
+            await self.context.unroute("**/*", restrict_auto)
 
     async def finish_recording(self):
         if self.recording is None:
@@ -551,16 +805,56 @@ class BrowserSession:
 
     async def close(self):
         self.recording = self.draft = self.captured = None
+        self.frame_cache = self.frame_page = self.verification_probe = None
+        self.buttons.clear()
         if self.expires:
             self.expires.cancel()
-        if self.context is not None:
-            self.context = None
-            await self.context_manager.__aexit__(None, None, None)
+            self.expires = None
+        if self.context_manager is not None:
+            cm, self.context_manager, self.context, self.page = self.context_manager, None, None, None
+            with suppress(Exception):
+                await cm.__aexit__(None, None, None)
+
+    async def _frame_verification(self, page):
+        from playwright.async_api import Error as BrowserError
+
+        now = time.monotonic()
+        url = page.url
+        probe = self.verification_probe
+        same_page = probe is not None and probe[0] is page and probe[1] == url
+        needs_verification = probe[3] if same_page else False
+        if not same_page or now - probe[2] >= 1:
+            # Bound the probe because screenshots and input share the session lock.
+            with suppress(BrowserError, asyncio.TimeoutError):
+                needs_verification = await asyncio.wait_for(challenge_visible(page), timeout=0.2)
+            self.verification_probe = (page, url, now, needs_verification)
+        return needs_verification
+
+    async def capture_frame(self):
+        page = self.active_page()
+        now = time.monotonic()
+        if self.frame_page is page and self.frame_cache and (now - self.last_frame_at) < 0.12:
+            frame = self.frame_cache
+        else:
+            frame = await page.screenshot(type="jpeg", quality=65, timeout=1800)
+            self.frame_cache = frame
+            self.frame_page = page
+            self.last_frame_at = now
+        verification = await self._frame_verification(page)
+        site = page_label(page.url)
+        pages = self.context.pages if self.context else [page]
+        active_idx = pages.index(page) if page in pages else 0
+        return {
+            "frame": frame,
+            "site": site if "://" in site else "",
+            "recording": "1" if self.recording else "0",
+            "verification": "1" if verification else "0",
+            "tabs": json.dumps([page_label(tab.url) for tab in pages], ensure_ascii=True),
+            "active_tab": str(active_idx),
+        }
 
 
 async def storage_for(context, origin):
-    import json
-
     from libs.security import domain_matches
 
     host = urlsplit(origin).hostname
@@ -593,8 +887,8 @@ async def replay(script, state):
     """Run the recorded browser interactions against the user's encrypted session."""
     from playwright.async_api import Error as BrowserError
 
+    validate_script(script)
     origin, url, steps = script["origin"], script["url"], script["steps"]
-    validate_steps(origin, url, steps)
     if not state:
         raise VerificationNeeded("登录会话已失效，请在 AI 签到工作台重新验证")
     await validate_start_url(url)

@@ -21,7 +21,7 @@
 
 <script src="{{ static_url('components/draggable-polyfill/lib/draggable-polyfill.js') }}"></script>
 
-<div class="container">
+<div class="container"{% if workbench_owner %} data-workbench-owner="{{ workbench_owner }}"{% endif %}>
   <div class="row" ng-controller="EntryList">
     <div class="col-md-3" id="editor-switch">
       <a class="h1-index" href="/">
@@ -119,8 +119,6 @@
         <p class="text-muted" style="margin: 12px 0;">您可以从以下方式开始制作签到模板：</p>
         <div style="margin-top: 15px;">
           <button class="btn btn-primary" data-toggle="modal" data-target="#upload-har"><i class="fa fa-upload"></i> 上传 / 追加 HAR</button>
-          <button class="btn btn-info" data-toggle="modal" data-target="#auto-capture" ng-click="open()"><i class="fa fa-play-circle"></i> URL 自动抓包</button>
-          <button class="btn btn-success" data-toggle="modal" data-target="#ai-analyze" ng-click="ai_open()"><i class="fa fa-magic"></i> AI 智能识别签到</button>
         </div>
       </div>
 
@@ -176,8 +174,6 @@
 
       <div class="text-right editor-action-bar" style="margin-top: 15px; margin-bottom: 25px;">
         <button class="btn btn-default" data-toggle="modal" data-target="#upload-har"><i class="fa fa-upload"></i> 追加HAR</button>
-        <button class="btn btn-default" data-toggle="modal" data-target="#auto-capture" ng-click="open()"><i class="fa fa-play-circle"></i> URL 自动抓包</button>
-        <button class="btn btn-default" data-toggle="modal" data-target="#ai-analyze" ng-click="ai_open()"><i class="fa fa-magic"></i> AI 智能识别签到</button>
         <a id="download-har" target="_blank" class="btn btn-default" ng-click="download()"><i class="fa fa-download"></i> 下载</a>
         <button class="btn btn-default" data-toggle="modal" data-target="#test-har" ng-click="pre_save()"><i class="fa fa-flask"></i> 测试</button>
         <button ng-if="!readonly" class="btn btn-primary" data-toggle="modal" data-target="#save-har" ng-click="pre_save()"><i class="fa fa-save"></i> 保存</button>
@@ -297,244 +293,6 @@
 {% endraw %}
 {% include "har/entry_editor.html" %}
 {% raw %}
-
-  <!-- Auto capture (Playwright sidecar) modal -->
-  <div class="modal fade" id="auto-capture" ng-controller="AutoCaptureCtrl">
-    <div class="modal-dialog modal-lg">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h4 class="modal-title">URL 自动抓包（Playwright）</h4>
-        </div>
-        <div class="modal-body">
-          <div class="alert alert-warning" ng-if="!enabled" role="alert">
-            自动抓包功能未启用：请管理员部署 <code>services/playwright</code> sidecar 容器并设置环境变量 <code>PLAYWRIGHT_SIDECAR_URL</code>。详见
-            <a href="/static/docs/auto-capture.md" target="_blank">部署文档</a>。
-          </div>
-          <div class="alert alert-info" ng-if="enabled" role="alert">
-            填入登录后的 Cookie 或 storage_state，让 Playwright 加载页面、找到签到按钮并自动录制 HAR。<strong>登录这一步需要你在浏览器里完成</strong>，复制 Cookie 后粘贴到下方。
-          </div>
-          <div class="alert alert-danger" ng-if="error" role="alert">{{ error }}</div>
-          <div class="form-horizontal" role="form">
-            <div class="form-group">
-              <label class="col-sm-3 control-label">URL *</label>
-              <div class="col-sm-9">
-                <input ng-model="url" placeholder="https://example.com/sign-in" style="width: 100%">
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="col-sm-3 control-label">Cookie</label>
-              <div class="col-sm-9">
-                <textarea ng-model="cookies" rows="3" style="width: 100%" placeholder="key1=value1; key2=value2 ..."></textarea>
-                <p class="help-block">从浏览器 F12 → Application → Cookies 复制；如果你有完整 storage_state.json 请填下面那项（优先生效）。</p>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="col-sm-3 control-label">storage_state JSON</label>
-              <div class="col-sm-9">
-                <textarea ng-model="storage_state" rows="3" style="width: 100%" placeholder='{"cookies": [...], "origins": [...]}'></textarea>
-                <p class="help-block">Playwright storage_state 格式，可由浏览器扩展导出（推荐）；填了这个 Cookie 字段会被忽略。</p>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="col-sm-3 control-label">提示词</label>
-              <div class="col-sm-9">
-                <input ng-model="hint" placeholder="例：每日签到 / 积分领取 / 打卡">
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="col-sm-3 control-label">CSS Selector（可选）</label>
-              <div class="col-sm-9">
-                <input ng-model="selector" placeholder="#sign-in-btn 或 .daily-check 等，留空则启发式自动找">
-              </div>
-            </div>
-            <div class="form-group">
-              <div class="col-sm-offset-3 col-sm-9">
-                <label><input type="checkbox" ng-model="auto_analyze"> 抓到 HAR 后自动调用 AI 分析（需配置 AI_API_KEY）</label>
-              </div>
-            </div>
-          </div>
-          <div ng-if="result" class="well" style="margin-top: 15px; background: #fafafa; border-radius: 4px;">
-            <h4 style="margin-top: 0; font-size: 15px;"><i class="fa fa-check-circle text-success"></i> 抓包完成</h4>
-            <div ng-if="result.found_button" class="alert alert-info" style="margin-bottom: 10px; padding: 8px 12px;">
-              已定位并点击按钮：<code>{{ result.found_button.text || result.found_button.selector }}</code>
-              <small class="text-muted">（selector: <code>{{ result.found_button.selector }}</code>）</small>
-            </div>
-            <p style="margin-bottom: 5px;">
-              原始请求条数：<strong>{{ result.har.log.entries.length || 0 }}</strong> 条 / 用时 <strong>{{ result.elapsed_ms || 0 }}</strong> ms
-            </p>
-
-            <div ng-if="result.ai" class="alert alert-success" style="margin-top: 10px; margin-bottom: 10px;">
-              <p style="margin-bottom: 0;">
-                <strong><i class="fa fa-magic"></i> AI 智能识别完成：</strong>
-                建议站点：<code>{{ result.ai.result.sitename || '已识别' }}</code> · 关键请求 <strong>{{ (result.ai.har.length || (result.ai.har.log && result.ai.har.log.entries.length) || 0) }}</strong> 条
-              </p>
-              <div ng-if="result.ai.warnings && result.ai.warnings.length > 0" style="margin-top: 8px;">
-                <div class="text-warning" style="font-size: 12px; font-weight: bold;">
-                  <i class="fa fa-exclamation-triangle"></i> AI 模板校验提示 ({{ result.ai.warnings.length }} 条)：
-                </div>
-                <ul style="margin: 4px 0 0 18px; font-size: 12px;">
-                  <li ng-repeat="w in result.ai.warnings">{{ w }}</li>
-                </ul>
-              </div>
-            </div>
-
-            <div ng-if="result.ai_skipped" class="alert alert-warning" style="margin-top: 10px; margin-bottom: 10px;">
-              <i class="fa fa-info-circle"></i>
-              <strong>AI 识别已跳过：</strong> {{ result.ai_skipped }}（将应用原始抓包数据）
-            </div>
-
-            <div ng-if="result.ai_error" class="alert alert-danger" style="margin-top: 10px; margin-bottom: 10px;">
-              <i class="fa fa-exclamation-circle"></i>
-              <strong>AI 后处理失败：</strong> {{ result.ai_error }}（将应用原始抓包数据）
-            </div>
-          </div>
-          <div ng-if="candidates && candidates.length">
-            <hr>
-            <strong>候选按钮（点击应用为 selector 后重试）：</strong>
-            <ul class="list-group" style="max-height:200px;overflow:auto;margin-top:8px">
-              <li class="list-group-item" ng-repeat="c in candidates" style="padding:6px 10px">
-                <a href="javascript:void(0)" ng-click="use_candidate_selector(c)">{{ c.text }}</a>
-                <small class="text-muted">{{ c.tag }} · score {{ c._score }} · <code>{{ c.selector }}</code></small>
-                <span ng-if="c.quality === 'stable'" class="label label-success" style="margin-left:6px">稳定</span>
-                <span ng-if="c.quality === 'medium'" class="label label-info" style="margin-left:6px">一般</span>
-                <span ng-if="c.quality === 'fragile'" class="label label-warning" style="margin-left:6px" title="DOM 结构改变后 selector 可能失效">脆弱</span>
-              </li>
-            </ul>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
-          <button type="button" class="btn btn-primary" ng-disabled="!enabled || busy" ng-click="run()">
-            <span ng-if="busy"><i class="fa fa-spinner fa-spin"></i> 抓包中...</span>
-            <span ng-if="!busy">开始抓包</span>
-          </button>
-          <button type="button" class="btn btn-success" ng-if="result && result.ok" ng-click="apply()" title="将抓包结果应用到当前编辑器中">
-            <i class="fa fa-check"></i> 应用为当前模板 (覆盖当前条目)
-          </button>
-        </div>
-      </div>
-    </div>
-  </div><!-- /.auto-capture modal -->
-
-  <!-- AI analyze modal -->
-  <div class="modal fade" id="ai-analyze" ng-controller="AIAnalyzeCtrl">
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header">
-          <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
-          <h4 class="modal-title"><i class="fa fa-magic text-primary"></i> AI 智能识别签到请求</h4>
-        </div>
-        <div class="modal-body">
-          <!-- Disabled State -->
-          <div class="alert alert-warning" ng-if="!ai_enabled" role="alert">
-            <h4><i class="fa fa-exclamation-triangle"></i> AI 功能未启用</h4>
-            <p>请管理员设置环境变量 <code>AI_API_KEY</code>（兼容 OpenAI 协议的服务，如 DeepSeek、OpenAI、Ollama 等）后重启 QD。</p>
-            <p style="margin-top: 8px;"><a href="/static/docs/ai-sign-template.md" target="_blank" class="alert-link">查看 AI 配置教程与支持模型</a></p>
-          </div>
-
-          <!-- Ready Info -->
-          <div class="alert alert-info" ng-if="ai_enabled" role="alert" style="margin-bottom: 15px;">
-            <i class="fa fa-info-circle"></i>
-            当前模型：<strong>{{ ai_model || '已就绪' }}</strong>。
-            AI 将分析当前 HAR 中的请求，识别签到接口与必要参数，自动生成最小可执行模板。
-          </div>
-
-          <!-- Error Alert (Distinguishing disabled / skipped / failed) -->
-          <div class="alert" ng-class="{'alert-warning': error_type === 'skipped', 'alert-danger': error_type !== 'skipped'}" ng-if="error" role="alert">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-              <div>
-                <strong>
-                  <i class="fa" ng-class="{'fa-ban': error_type === 'disabled', 'fa-info-circle': error_type === 'skipped', 'fa-exclamation-circle': error_type === 'failed'}"></i>
-                  <span ng-if="error_type === 'disabled'">AI 处于禁用状态：</span>
-                  <span ng-if="error_type === 'skipped'">AI 分析已跳过：</span>
-                  <span ng-if="error_type === 'failed'">AI 分析失败：</span>
-                </strong>
-                {{ error }}
-              </div>
-              <button type="button" class="btn btn-xs" ng-class="{'btn-warning': error_type === 'skipped', 'btn-danger': error_type !== 'skipped'}" ng-click="retry()" ng-disabled="busy" style="margin-left: 10px; white-space: nowrap;">
-                <i class="fa fa-refresh"></i> 重试
-              </button>
-            </div>
-          </div>
-
-          <!-- Form Input -->
-          <div class="form-horizontal" role="form">
-            <div class="form-group">
-              <label class="col-sm-3 control-label">提示词（可选）</label>
-              <div class="col-sm-9">
-                <input ng-model="hint" class="form-control" placeholder="例：'每日签到' / '积分领取' / '打卡'，留空则由 AI 自动推断" ng-disabled="busy || !ai_enabled">
-                <span class="help-block" style="margin-bottom: 0; font-size: 12px;">提供签到关键词有助于 AI 精准挑选签到步骤</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Busy loading spinner -->
-          <div ng-if="busy" class="text-center" style="padding: 25px 0;">
-            <i class="fa fa-spinner fa-spin fa-2x text-primary"></i>
-            <p style="margin-top: 10px; color: #666;">正在调用 AI 分析中，请稍候（通常需要 5~20 秒）...</p>
-          </div>
-
-          <!-- Result Section -->
-          <div ng-if="result && !busy" style="margin-top: 15px;">
-            <div class="panel panel-success" style="margin-bottom: 12px;">
-              <div class="panel-heading">
-                <strong><i class="fa fa-check-circle"></i> 分析完成</strong>
-                <span class="pull-right badge">{{ (result.har.length || (result.har.log && result.har.log.entries.length) || 0) }} 条关键请求</span>
-              </div>
-              <div class="panel-body" style="padding: 10px 15px;">
-                <p style="margin-bottom: 6px;" ng-if="result.result.sitename">
-                  <strong>建议站点名：</strong><code>{{ result.result.sitename }}</code>
-                </p>
-                <p style="margin-bottom: 6px;" ng-if="result.result.siteurl">
-                  <strong>建议站点地址：</strong><code>{{ result.result.siteurl }}</code>
-                </p>
-                <p style="margin-bottom: 0;" ng-if="result.result.variables && result.result.variables.length">
-                  <strong>所需变量：</strong>
-                  <span class="label label-info" ng-repeat="v in result.result.variables" style="margin-right: 4px;">{{ v }}</span>
-                </p>
-              </div>
-            </div>
-
-            <!-- Warnings Collapsible Panel (hidden when empty) -->
-            <div class="panel panel-warning" ng-if="warnings && warnings.length > 0" style="margin-bottom: 12px;">
-              <div class="panel-heading" style="cursor: pointer; user-select: none;" ng-click="toggle_warnings()">
-                <i class="fa fa-exclamation-triangle"></i>
-                <strong>模板生成提示 / 警告 ({{ warnings.length }} 条)</strong>
-                <span class="pull-right">
-                  <span class="text-muted" style="font-size: 12px;">{{ show_warnings ? '收起' : '展开' }}</span>
-                  <i class="fa" ng-class="show_warnings ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
-                </span>
-              </div>
-              <div class="panel-body" ng-show="show_warnings" style="padding: 10px 15px; max-height: 180px; overflow-y: auto;">
-                <ul style="margin-bottom: 0; padding-left: 20px;">
-                  <li ng-repeat="w in warnings" class="text-warning-dark" style="margin-bottom: 4px;">{{ w }}</li>
-                </ul>
-              </div>
-            </div>
-
-            <!-- Collapsible Raw JSON preview -->
-            <div style="margin-top: 8px;">
-              <a href="javascript:void(0);" ng-click="toggle_raw()" class="text-muted" style="font-size: 12px;">
-                <i class="fa" ng-class="show_raw ? 'fa-caret-down' : 'fa-caret-right'"></i> {{ show_raw ? '隐藏原始 JSON 响应' : '查看原始 JSON 响应' }}
-              </a>
-              <pre ng-show="show_raw" style="max-height: 200px; overflow: auto; margin-top: 6px; font-size: 12px;">{{ result_text }}</pre>
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-default" data-dismiss="modal">取消</button>
-          <button type="button" class="btn btn-primary" ng-disabled="!ai_enabled || busy" ng-click="run()">
-            <span ng-if="busy"><i class="fa fa-spinner fa-spin"></i> 分析中...</span>
-            <span ng-if="!busy && !result">开始分析</span>
-            <span ng-if="!busy && result"><i class="fa fa-refresh"></i> 重新分析</span>
-          </button>
-          <button type="button" class="btn btn-success" ng-if="result" ng-click="apply()" title="将 AI 识别结果覆盖到当前编辑器中">
-            <i class="fa fa-check"></i> 应用为当前模板 (覆盖当前条目)
-          </button>
-        </div>
-      </div>
-    </div>
-  </div><!-- /.ai modal -->
 
   <!-- upload modal -->
   <div class="modal fade" id="upload-har" ng-controller="UploadCtrl">

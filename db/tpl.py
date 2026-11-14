@@ -26,6 +26,7 @@ class Tpl(BaseDB, AlchemyMixin):
     disabled = Column(TINYINT(1), nullable=False, server_default=text("'0'"))
     public = Column(TINYINT(1), nullable=False, server_default=text("'0'"))
     lock = Column(TINYINT(1), nullable=False, server_default=text("'0'"))
+    browser = Column(TINYINT(1), nullable=False, server_default=text("'0'"))
     success_count = Column(INTEGER, nullable=False, server_default=text("'0'"))
     failed_count = Column(INTEGER, nullable=False, server_default=text("'0'"))
     ctime = Column(INTEGER, nullable=False)
@@ -47,7 +48,7 @@ class Tpl(BaseDB, AlchemyMixin):
     last_success = Column(INTEGER)
     tplurl = Column(String(1024), server_default=text("''"))
 
-    def add(self, userid, har, tpl, variables, init_env, interval=None, sql_session=None):
+    def add(self, userid, har, tpl, variables, init_env, interval=None, sql_session=None, *, browser=False):
         now = time.time()
 
         insert = dict(
@@ -57,6 +58,7 @@ class Tpl(BaseDB, AlchemyMixin):
             banner=None,
             disabled=0,
             public=0,
+            browser=browser,
             fork=None,
             har=har,
             tpl=tpl,
@@ -73,7 +75,7 @@ class Tpl(BaseDB, AlchemyMixin):
     def mod(self, id, sql_session=None, **kwargs):
         return self._update(update(Tpl).where(Tpl.id == id).values(**kwargs), sql_session=sql_session)
 
-    async def get(self, id, fields=None, one_or_none=False, first=True, to_dict=True, sql_session=None):
+    async def get(self, id, fields=None, one_or_none=False, first=True, to_dict=True, sql_session=None, *, for_update=False):
         assert id, 'need id'
         if fields is None:
             _fields = [Tpl]
@@ -81,6 +83,8 @@ class Tpl(BaseDB, AlchemyMixin):
             _fields = [getattr(Tpl, field) for field in fields]
 
         smtm = select(*_fields).where(Tpl.id == id)
+        if for_update:
+            smtm = smtm.with_for_update()
 
         result = await self._get(smtm, one_or_none=one_or_none, first=first, sql_session=sql_session)
         if to_dict and result is not None:

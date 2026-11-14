@@ -12,6 +12,7 @@ import time
 from tornado.web import authenticated
 
 import config
+from db.task import Task
 from libs.funcs import Cal
 from web.handlers.base import BaseHandler, logger_web_handler
 
@@ -70,20 +71,23 @@ class TaskMultiOperateHandler(BaseHandler):
             for taskid, selected in env['selectedtasks'].items():
                 if selected:
                     async with self.db.transaction() as sql_session:
-                        task = await self.db.task.get(taskid, fields=('id', 'note', 'tplid', 'userid', 'browser_state'), sql_session=sql_session)
+                        task = await self.db.task.get(
+                            taskid,
+                            fields=('id', 'note', 'tplid', 'userid', 'browser_state'),
+                            sql_session=sql_session,
+                        )
                         if task:
                             if task['userid'] == int(userid):
+                                paused_verify = task.get('browser_state') == Task.BROWSER_VERIFY
                                 if tasktype == 'disable':
                                     await self.db.task.mod(taskid, disabled=True, sql_session=sql_session)
-                                if tasktype == 'enable':
+                                if tasktype == 'enable' and not paused_verify:
                                     await self.db.task.mod(taskid, disabled=False, sql_session=sql_session)
                                 if tasktype == 'delete':
                                     logs = await self.db.tasklog.list(taskid=taskid, fields=('id',), sql_session=sql_session)
                                     for log in logs:
                                         await self.db.tasklog.delete(log['id'], sql_session=sql_session)
                                     await self.db.task.delete(taskid, sql_session=sql_session)
-                                    if task.get('browser_state'):
-                                        await self.db.tpl.delete(task['tplid'], sql_session=sql_session)
                                 if tasktype == 'setgroup':
                                     group_env = env['setgroup']
                                     new_group = group_env['newgroup'].strip()
@@ -121,9 +125,10 @@ class TaskMultiOperateHandler(BaseHandler):
 
                                     tmp = c.cal_next_ts(settime_env)
                                     if tmp['r'] == 'True':
-                                        await self.db.task.mod(taskid, disabled=False,
+                                        await self.db.task.mod(taskid,
+                                                               disabled=True if paused_verify else False,
                                                                newontime=json.dumps(settime_env),
-                                                               next=tmp['ts'],
+                                                               next=None if paused_verify else tmp['ts'],
                                                                sql_session=sql_session)
                                     else:
                                         raise Exception('参数错误')

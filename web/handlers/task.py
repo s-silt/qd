@@ -25,7 +25,17 @@ class TaskNewHandler(BaseHandler):
     async def get(self):
         user = self.current_user
         tplid = self.get_argument("tplid", None)
-        fields = ("id", "sitename", "success_count", "lock", "_groups")
+        fields = ("id", "sitename", "success_count", "lock", "_groups", "browser")
+        if tplid:
+            try:
+                tplid = int(tplid)
+            except ValueError:
+                raise HTTPError(400) from None
+            if tplid <= 0:
+                raise HTTPError(400)
+            selected = self.check_permission(await self.db.tpl.get(tplid, fields=("id", "userid", "sitename", "browser")))
+            if selected["browser"]:
+                return await self.render("task_new_browser.html", tpl=selected)
 
         tpls = []
         if user:
@@ -39,7 +49,9 @@ class TaskNewHandler(BaseHandler):
             await self.db.tpl.list(userid=None, public=1, fields=fields, limit=None),
             key=lambda t: -t["success_count"],
         )
-        tpls = [tpl for tpl in tpls if not (tpl.get("lock") and tpl.get("_groups") == Task.BROWSER_GROUP)]
+        tpls = [tpl for tpl in tpls if not tpl.get("browser") and not (
+            tpl.get("lock") and tpl.get("_groups") == Task.BROWSER_GROUP
+        )]
 
         if not tplid:
             for tpl in tpls:
@@ -90,6 +102,8 @@ class TaskNewHandler(BaseHandler):
                 init_env=init_env,
                 default_retry_count=config.task_max_retry_count,
             )
+        elif user:
+            await self.render("task_new_browser.html", tpl=None)
         else:
             await self.render(
                 "utils_run_result.html",
@@ -111,9 +125,11 @@ class TaskNewHandler(BaseHandler):
         async with self.db.transaction() as sql_session:
             tpl = self.check_permission(
                 await self.db.tpl.get(
-                    tplid, fields=("id", "userid", "interval", "lock", "_groups"), sql_session=sql_session
+                    tplid, fields=("id", "userid", "interval", "lock", "_groups", "browser"), sql_session=sql_session
                 )
             )
+            if tpl.get("browser"):
+                raise HTTPError(400, reason="请在工作台给浏览器任务绑定登录状态")
             if tpl.get("lock") and tpl.get("_groups") == Task.BROWSER_GROUP:
                 raise HTTPError(400, reason="请在 AI 签到工作台创建或更新此任务")
             envs = {}
@@ -239,10 +255,15 @@ class TaskEditHandler(TaskNewHandler):
                     "note",
                     "retry_count",
                     "retry_interval",
+                    "browser_state",
                 ),
             ),
             "w",
         )
+        if task.get("browser_state"):
+            tpl = self.check_permission(await self.db.tpl.get(task["tplid"], fields=("id", "userid", "sitename")))
+            return await self.render("task_edit_browser.html", task=task, tpl=tpl,
+                                     default_retry_count=config.task_max_retry_count)
         task["init_env"] = await self.db.user.decrypt(
             user["id"], (await self.db.task.get(taskid, ("init_env",)))["init_env"]
         )
@@ -281,6 +302,31 @@ class TaskEditHandler(TaskNewHandler):
             task_title="修改任务",
         )
 
+    @authenticated
+    async def post(self, taskid):
+        task = self.check_permission(await self.db.task.get(taskid, fields=("id", "userid", "browser_state")), "w")
+        if not task.get("browser_state"):
+            return await super().post(taskid)
+        from libs.signin_tasks import update_browser_task_settings
+        from libs.signin_workbench import WorkbenchError, WorkbenchPermissionError
+
+        try:
+            await update_browser_task_settings(
+                self.db,
+                self.current_user["id"],
+                taskid,
+                note=self.get_body_argument("_binux_note", ""),
+                retry_count_raw=self.get_body_argument(
+                    "_binux_retry_count", str(config.task_max_retry_count)
+                ),
+                retry_interval_raw=self.get_body_argument("_binux_retry_interval", ""),
+            )
+        except WorkbenchPermissionError as exc:
+            raise HTTPError(exc.status_code) from None
+        except WorkbenchError as exc:
+            raise HTTPError(400, reason=str(exc)) from None
+        self.redirect("/my/")
+
 
 class TaskRunHandler(BaseHandler):
     @authenticated
@@ -289,14 +335,27 @@ class TaskRunHandler(BaseHandler):
             await self.db.task.get(taskid, fields=("id", "userid", "browser_state")), "w"
         )
         if task["browser_state"]:
+            taskid = int(task["id"])
             if task["browser_state"] == Task.BROWSER_VERIFY:
+                if self.request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                    return await self.render("task_browser_result.html", title="需要重新验证", taskid=taskid, verify=True)
                 self.redirect(f"/ai-workbench/?task={taskid}")
                 return
             from worker import BaseWorker
 
-            await BaseWorker(self.db).do(task)
-            self.redirect(f"/task/{taskid}/log")
-            return
+            worker = BaseWorker(self.db)
+            await worker.do(task, manual=True)
+            if self.request.headers.get("X-Requested-With") != "XMLHttpRequest":
+                self.redirect(f"/task/{taskid}/log")
+                return
+            current = await self.db.task.get(taskid, fields=("id", "userid", "browser_state"))
+            if current and current["browser_state"] == Task.BROWSER_VERIFY:
+                return await self.render("task_browser_result.html", title="需要重新验证", taskid=taskid, verify=True)
+            result = worker.last_result
+            return await self.render("task_browser_result.html",
+                                     title="签到成功" if result and result.success else "签到未完成",
+                                     log=result.reason if result is not None else "任务已在执行或状态已更新",
+                                     taskid=taskid)
         self.evil(+2)
         start_ts = int(time.time())
         user = self.current_user
@@ -638,9 +697,9 @@ class TaskDelHandler(BaseHandler):
     async def post(self, taskid):
         # user = self.current_user
         async with self.db.transaction() as sql_session:
-            task = self.check_permission(
+            self.check_permission(
                 await self.db.task.get(
-                    taskid, fields=("userid", "tplid", "browser_state"), sql_session=sql_session
+                    taskid, fields=("userid",), sql_session=sql_session
                 ),
                 "w",
             )
@@ -650,8 +709,6 @@ class TaskDelHandler(BaseHandler):
             for log in logs:
                 await self.db.tasklog.delete(log["id"], sql_session=sql_session)
             await self.db.task.delete(taskid, sql_session=sql_session)
-            if task.get("browser_state"):
-                await self.db.tpl.delete(task["tplid"], sql_session=sql_session)
 
         self.redirect("/my/")
 
@@ -725,6 +782,15 @@ class TaskSetTimeHandler(BaseHandler):
                     envs[key] = str(value[0])
 
             async with self.db.transaction() as sql_session:
+                current_task = self.check_permission(
+                    await self.db.task.get(
+                        taskid,
+                        fields=("id", "userid", "newontime", "browser_state"),
+                        sql_session=sql_session,
+                    ),
+                    "w",
+                )
+                paused_verify = current_task.get("browser_state") == Task.BROWSER_VERIFY
                 if envs["sw"]:
                     c = Cal()
                     if "time" in envs:
@@ -734,23 +800,20 @@ class TaskSetTimeHandler(BaseHandler):
                     if tmp["r"] == "True":
                         await self.db.task.mod(
                             taskid,
-                            disabled=False,
+                            disabled=True if paused_verify else False,
                             newontime=json.dumps(envs),
-                            next=tmp["ts"],
+                            next=None if paused_verify else tmp["ts"],
                             sql_session=sql_session,
                         )
 
-                        log = f"设置成功，下次执行时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(tmp['ts']))}"
+                        if paused_verify:
+                            log = "定时配置已保存。当前任务待重新验证，请在 AI 签到工作台验证后恢复调度。"
+                        else:
+                            log = f"设置成功，下次执行时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(tmp['ts']))}"
                     else:
                         raise Exception(tmp["r"])
                 else:
-                    tmp = json.loads(
-                        (
-                            await self.db.task.get(
-                                taskid, fields=("newontime",), sql_session=sql_session
-                            )
-                        )["newontime"]
-                    )
+                    tmp = json.loads(current_task["newontime"])
                     tmp["sw"] = False
                     await self.db.task.mod(
                         taskid, newontime=json.dumps(tmp), sql_session=sql_session

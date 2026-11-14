@@ -1,0 +1,22 @@
+{%- import "signin_header.html" as signin -%}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block page_title %}{% endblock %} · QD</title>
+  <link rel="icon" href="{{ static_url('img/icon.png') }}">
+  <link rel="stylesheet" href="{{ static_url('css/ai_workbench.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/signin_shell.css') }}">
+  {% block page_assets %}{% endblock %}
+</head>
+<body>
+  <a class="qd-skip" href="#qd-main">跳到主要内容</a>
+  <div class="qd-shell {% block shell_class %}{% endblock %}" {% block shell_attributes %}{% endblock %}>
+    {% block page_header %}{{ signin.header(self.page_title()) }}{% endblock %}
+    <main id="qd-main" class="{% block main_class %}{% endblock %}" tabindex="-1">
+      {% block main %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

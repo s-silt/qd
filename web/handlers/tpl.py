@@ -6,6 +6,7 @@
 # Created on 2014-08-09 17:52:49
 
 import json
+import re
 from codecs import escape_decode
 
 from tornado.web import HTTPError, authenticated
@@ -13,6 +14,9 @@ from tornado.web import HTTPError, authenticated
 import config
 from db.task import Task
 from libs.parse_url import parse_url
+from libs.signin_receipt import SigninTrial
+from libs.signin_tasks import load_browser_template_detail
+from libs.signin_workbench import WorkbenchError, WorkbenchPermissionError
 from web.handlers.base import BaseHandler, logger_web_handler
 
 
@@ -20,13 +24,13 @@ class TPLPushHandler(BaseHandler):
     @authenticated
     async def get(self, tplid):
         # user = self.current_user
-        tpl = await self.db.tpl.get(tplid, fields=('id', 'userid', 'sitename', 'lock', '_groups'))
-        if tpl and tpl.get('lock') and tpl.get('_groups') == Task.BROWSER_GROUP:
-            raise HTTPError(400, reason="浏览器任务使用当前账号的登录状态")
+        tpl = await self.db.tpl.get(tplid, fields=('id', 'userid', 'sitename', 'lock', '_groups', 'browser'))
         if not self.permission(tpl, 'w'):
             self.evil(+5)
             await self.finish('<span class="alert alert-danger">没有权限</span>')
             return
+        if tpl.get('browser') or tpl.get('lock') and tpl.get('_groups') == Task.BROWSER_GROUP:
+            raise HTTPError(400, reason="请通过私有模板使用浏览器签到脚本")
         tpls = await self.db.tpl.list(userid=None, limit=None, fields=('id', 'sitename', 'public'))
         for i, _ in enumerate(tpls):
             if tpls[i]['public'] == 2:
@@ -38,13 +42,13 @@ class TPLPushHandler(BaseHandler):
         user = self.current_user
         tplid = int(tplid)
         async with self.db.transaction() as sql_session:
-            tpl = await self.db.tpl.get(tplid, fields=('id', 'userid', 'lock', '_groups'), sql_session=sql_session)
-            if tpl and tpl.get('lock') and tpl.get('_groups') == Task.BROWSER_GROUP:
-                raise HTTPError(400, reason="浏览器任务使用当前账号的登录状态")
+            tpl = await self.db.tpl.get(tplid, fields=('id', 'userid', 'lock', '_groups', 'browser'), sql_session=sql_session)
             if not self.permission(tpl, 'w'):
                 self.evil(+5)
                 await self.finish('<span class="alert alert-danger">没有权限</span>')
                 return
+            if tpl.get('browser') or tpl.get('lock') and tpl.get('_groups') == Task.BROWSER_GROUP:
+                raise HTTPError(400, reason="请通过私有模板使用浏览器签到脚本")
 
             to_tplid = int(self.get_argument('totpl'))
             msg = self.get_argument('msg')
@@ -84,7 +88,11 @@ class TPLDelHandler(BaseHandler):
     async def post(self, tplid):
         # user = self.current_user
         async with self.db.transaction() as sql_session:
-            tpl = self.check_permission(await self.db.tpl.get(tplid, fields=('id', 'userid', 'public'), sql_session=sql_session), 'w')
+            tpl = self.check_permission(await self.db.tpl.get(tplid, fields=('id', 'userid', 'public', 'browser'), sql_session=sql_session, for_update=True), 'w')
+            if tpl.get('browser') and await self.db.task.list(
+                fields=('id',), limit=1, tplid=int(tplid), sql_session=sql_session,
+            ):
+                raise HTTPError(409, reason="有任务正在使用此模板，请先删除关联任务")
             if tpl['public'] == 1:
                 prs = await self.db.push_request.list(to_tplid=tplid, fields=('id', ), sql_session=sql_session)
                 for pr in prs:
@@ -96,8 +104,17 @@ class TPLDelHandler(BaseHandler):
 
 class TPLRunHandler(BaseHandler):
     async def post(self, tplid):
-        self.evil(+5)
         user = self.current_user
+        json_result = self.get_query_argument("format", "") == "json"
+        if json_result:
+            if not user:
+                raise HTTPError(401)
+            if self.request.headers.get("X-QD-Editor") != "1":
+                raise HTTPError(403)
+            self.set_header("Cache-Control", "no-store")
+        trial = SigninTrial() if json_result else None
+        observation = {"observe_step": trial.observe} if trial else {}
+        self.evil(+5)
         data = {}
         try:
             if 'json' in self.request.headers['Content-Type']:
@@ -107,6 +124,8 @@ class TPLRunHandler(BaseHandler):
         except Exception as e:
             logger_web_handler.debug('TPLRunHandler post error: %s', e, exc_info=config.traceback_print)
 
+        if json_result and not isinstance(data, dict):
+            raise HTTPError(400)
         tplid = tplid or data.get(
             'tplid') or self.get_argument('_binux_tplid', None)
         tpl = dict()
@@ -114,7 +133,11 @@ class TPLRunHandler(BaseHandler):
         async with self.db.transaction() as sql_session:
             if tplid:
                 tpl = self.check_permission(await self.db.tpl.get(tplid, fields=('id', 'userid', 'sitename',
-                                                                                 'siteurl', 'tpl', 'interval', 'last_success'), sql_session=sql_session))
+                                                                                 'siteurl', 'tpl', 'browser', 'interval', 'last_success'), sql_session=sql_session))
+                if tpl.get('browser'):
+                    if trial:
+                        return await self.finish(trial.payload(False, None, "请在浏览器工作台试跑这份模板。"))
+                    return await self.render('tpl_run_failed.html', log='请打开模板，在工作台登录站点后试跑浏览器脚本。')
                 fetch_tpl = await self.db.user.decrypt(tpl['userid'], tpl['tpl'], sql_session=sql_session)
 
             if not fetch_tpl:
@@ -130,6 +153,12 @@ class TPLRunHandler(BaseHandler):
                     raise HTTPError(400) from e
 
             env = data.get('env')
+            if json_result and (
+                not isinstance(fetch_tpl, list) or not fetch_tpl
+                or not isinstance(env, dict) or not isinstance(env.get('variables'), dict)
+                or env.get('session') != []
+            ):
+                raise HTTPError(400)
             if not env:
                 try:
                     env = dict(
@@ -150,12 +179,25 @@ class TPLRunHandler(BaseHandler):
                         'username': url['username'],
                         'password': url['password']
                     }
-                    result, _ = await self.fetcher.do_fetch(fetch_tpl, env, [proxy])
+                    result, _ = await self.fetcher.do_fetch(fetch_tpl, env, [proxy], **observation)
                 elif self.current_user:
-                    result, _ = await self.fetcher.do_fetch(fetch_tpl, env)
+                    result, _ = await self.fetcher.do_fetch(fetch_tpl, env, **observation)
                 else:
                     result, _ = await self.fetcher.do_fetch(fetch_tpl, env, proxies=[])
             except Exception as e:
+                if trial:
+                    logger_web_handler.info(
+                        'Template editor trial failed for user %d (%s)', user['id'], type(e).__name__
+                    )
+                    detail = str(e)
+                    match = re.match(r"^Failed at (\d+)/\d+", detail)
+                    if "Fail assert" in detail:
+                        message = "响应没有通过这一步的判定。请检查成功条件、失败条件或前一步传入的值。"
+                    elif "未发起任何 HTTP 请求" in detail:
+                        message = "没有发出任何请求。请检查已启用的步骤及流程条件。"
+                    else:
+                        message = "这一步未能完成。请检查请求地址、输入变量和网络连接。"
+                    return await self.finish(trial.payload(False, int(match.group(1)) if match else None, message))
                 logger_web_handler.error('UserID:%d tplID:%d failed! \r\n%s', user.get(
                     'id', -1) or -1, int(tplid or -1), str(e).replace('\\r\\n', '\r\n'), exc_info=config.traceback_print)
                 await self.render('tpl_run_failed.html', log=str(e))
@@ -163,6 +205,11 @@ class TPLRunHandler(BaseHandler):
 
             if tpl:
                 await self.db.tpl.incr_success(tpl['id'], sql_session=sql_session)
+        if trial:
+            return await self.finish(trial.payload(
+                True, None, "实际执行的步骤已通过 QD 判定。",
+                template_log=result.get("variables", {}).get("__log__"),
+            ))
         await self.render('tpl_run_success.html', log=result.get('variables', {}).get('__log__'))
         return
 
@@ -218,6 +265,28 @@ class TPLGroupHandler(BaseHandler):
         self.redirect('/my/')
 
 
+class BrowserTemplateHandler(BaseHandler):
+    @authenticated
+    async def get(self, tplid):
+        self.set_header('Cache-Control', 'no-store')
+        try:
+            detail = await load_browser_template_detail(
+                self.db, self.current_user['id'], int(tplid)
+            )
+        except WorkbenchPermissionError as exc:
+            raise HTTPError(exc.status_code) from None
+        except (WorkbenchError, ValueError):
+            raise HTTPError(409, reason='签到脚本暂时无法读取') from None
+        if not detail:
+            raise HTTPError(404)
+        await self.render(
+            'tpl_browser.html',
+            tpl=detail['tpl'],
+            script=detail['script'],
+            tasks=detail['tasks'],
+        )
+
+
 handlers = [
     (r'/tpl/(\d+)/push', TPLPushHandler),
     (r'/tpl/(\d+)/var', TPLVarHandler),
@@ -225,4 +294,5 @@ handlers = [
     (r'/tpl/?(\d+)?/run', TPLRunHandler),
     (r'/tpls/public', PublicTPLHandler),
     (r'/tpl/(\d+)/group', TPLGroupHandler),
+    (r'/tpl/(\d+)/browser', BrowserTemplateHandler),
 ]

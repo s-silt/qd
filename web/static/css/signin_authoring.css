@@ -1,0 +1,22 @@
+.author-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: var(--qd-gap); align-items: start; }
+.author-grid p, .author-grid li { line-height: 1.6; overflow-wrap: anywhere; }
+.author-grid p { margin-top: 8px; color: var(--muted); }
+.author-grid form { margin-top: 18px; }
+.author-field { display: grid; gap: 6px; margin-bottom: 14px; }
+.author-field small, .author-status { color: var(--muted); }
+.author-status:not(:empty), .author-error:not(:empty) { padding: 10px 0 0; }
+.author-error { color: var(--danger); }
+.author-guide ol { padding-inline-start: 24px; }
+.author-guide li + li { margin-top: 8px; }
+.author-guide a { display: inline-block; margin-top: 12px; }
+.author-model { font-size: .83rem; }
+.author-draft { grid-column: 1 / -1; }
+.author-badge { padding: 4px 9px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+.author-warnings { padding: 12px 16px 12px 36px; background: #fff4df; border-radius: 8px; color: #674917; }
+.author-steps { padding-inline-start: 24px; }
+.author-steps li { padding-block: 6px; }
+.author-steps small { display: block; color: var(--muted); }
+.author-draft details { padding: 12px; background: var(--soft); border-radius: 8px; }
+.author-draft pre { overflow: auto; max-height: 20rem; font-size: .85rem; }
+.author-actions { margin-top: 15px; }
+@media (max-width: 47.5rem) { .author-grid { grid-template-columns: minmax(0, 1fr); } }

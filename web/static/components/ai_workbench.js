@@ -4,10 +4,13 @@
   const el = (id) => document.getElementById(id);
   const workspace = el('workbench');
   const task = Number(workspace.dataset.task) || null;
+  const template = Number(workspace.dataset.template) || null;
   const base = '/ai-workbench';
-  const storageKey = `qd-workbench-${task || 'new'}`;
+  const storageKey = `qd-workbench-${template ? `template-${template}` : task || 'new'}`;
   const chat = el('chat-scroll');
-  const welcome = chat.innerHTML;
+  const welcome = Array.from(chat.children, (node) => node.cloneNode(true));
+  const draftPanel = el('draft-panel');
+  const workflowSteps = Array.from(workspace.querySelectorAll('[data-phase]'));
   const image = el('browser-frame');
   const screen = el('browser-screen');
   const browser = el('browser-panel');
@@ -20,7 +23,12 @@
   let pointer = null;
   let busy = false;
   let recording = false;
+  let recordingStatus = '';
+  let needsVerification = false;
   let chatBusy = false;
+  let frameTimer;
+  let pendingFrame;
+  let readyPhase = 'open';
 
   async function api(path, data, keepalive = false) {
     const response = await fetch(`${base}${path}`, {
@@ -33,6 +41,7 @@
     if (!response.ok) {
       const failure = new Error(result.error || (response.status === 404 ? '浏览器会话已关闭' : '操作失败，请重试'));
       failure.status = response.status;
+      failure.verification = result.verification === true;
       throw failure;
     }
     return result;
@@ -64,11 +73,29 @@
 
   function error(text = '') {
     el('browser-error').textContent = text;
-    el('browser-error').hidden = !text;
   }
 
-  function status(text) {
-    el('browser-status').textContent = text;
+  function status(text, announce = false) {
+    const statusText = el('browser-status');
+    if (statusText.textContent !== text) statusText.textContent = text;
+    const liveRegion = el('browser-announcement');
+    if (announce && liveRegion.textContent !== text) liveRegion.textContent = text;
+  }
+
+  function setPhase(phase) {
+    if (readyPhase === phase) return;
+    readyPhase = phase;
+    const selected = workflowSteps.findIndex((step) => step.dataset.phase === phase);
+    for (const [index, step] of workflowSteps.entries()) {
+      step.classList.toggle('complete', index < selected);
+      if (index === selected) step.setAttribute('aria-current', 'step');
+      else step.removeAttribute('aria-current');
+    }
+  }
+
+  function clearDraft() {
+    draftPanel.replaceChildren();
+    draftPanel.hidden = true;
   }
 
   function stored(value) {
@@ -91,9 +118,15 @@
     el('browser-close').hidden = !active;
     el('browser-close').disabled = busy;
     el('browser-expand').hidden = !active || !browser.requestFullscreen;
-    if (task) {
+    if (task || template) {
       el('recovery-open').disabled = active || busy || !workspace.dataset.browser;
-      el('resume-task').disabled = busy;
+      if (task) {
+        el('resume-task').disabled = busy;
+      } else {
+        el('template-test').disabled = busy;
+        el('template-task').hidden = !active;
+        for (const button of el('template-task').querySelectorAll('button')) button.disabled = busy;
+      }
     } else {
       el('site-open').disabled = busy || recording || !workspace.dataset.browser;
       el('browser-back').disabled = !active || busy || recording;
@@ -105,6 +138,7 @@
       for (const control of ['record-auto', 'record-manual', 'record-finish', 'record-retry', 'record-cancel']) {
         el(control).disabled = busy;
       }
+      for (const button of draftPanel.querySelectorAll('button')) button.disabled = busy || recording;
     }
   }
 
@@ -130,8 +164,10 @@
 
   async function frames(id) {
     if (session !== id) return;
+    const controller = new AbortController();
+    pendingFrame = controller;
     try {
-      const response = await fetch(`${base}/browser/${id}/frame`, { cache: 'no-store' });
+      const response = await fetch(`${base}/browser/${id}/frame`, { cache: 'no-store', signal: controller.signal });
       if (session !== id) return;
       if (response.status === 404 || response.redirected) {
         resetBrowser();
@@ -149,21 +185,39 @@
           const remoteRecording = response.headers.get('X-QD-Recording') === '1';
           if (remoteRecording !== recording) {
             recording = remoteRecording;
+            if (!recording) recordingStatus = '';
             setControls();
           }
-          status(recording ? '录制签到中' : response.headers.get('X-QD-Site') || '浏览器已打开');
+          const pendingVerification = response.headers.get('X-QD-Verification') === '1';
+          const verificationChanged = needsVerification !== pendingVerification;
+          needsVerification = pendingVerification;
+          if (needsVerification) {
+            status('站点要求登录或验证，请在当前页面完成', verificationChanged);
+          } else if (recording) {
+            status(recordingStatus || '正在录制签到');
+          } else if (verificationChanged || readyPhase === 'record') {
+            status(response.headers.get('X-QD-Site') || '浏览器已打开', verificationChanged);
+          }
         }
       }
     } catch (_) {
       if (session === id) status('正在重新连接浏览器…');
     }
-    if (session === id) window.setTimeout(() => frames(id), document.hidden ? 1800 : 220);
+    if (pendingFrame === controller) pendingFrame = undefined;
+    if (session === id) frameTimer = window.setTimeout(() => frames(id), document.hidden ? 1800 : 300);
   }
 
   function resetBrowser() {
     session = null;
+    clearTimeout(frameTimer);
+    pendingFrame?.abort();
+    pendingFrame = undefined;
+    clearDraft();
+    setPhase('open');
+    needsVerification = false;
     stored(null);
     recording = false;
+    recordingStatus = '';
     tabState = '';
     pointer = null;
     el('browser-tabs').replaceChildren();
@@ -176,6 +230,7 @@
     if (frameURL) URL.revokeObjectURL(frameURL);
     frameURL = undefined;
     status('等待打开网站');
+    el('browser-announcement').textContent = '';
     setControls();
   }
 
@@ -183,6 +238,7 @@
     if (busy) return;
     busy = true;
     error();
+    screen.setAttribute('aria-busy', 'true');
     setControls();
     try {
       await inputQueue;
@@ -191,6 +247,7 @@
       error(failure.message);
     } finally {
       busy = false;
+      screen.removeAttribute('aria-busy');
       setControls();
     }
   }
@@ -205,13 +262,18 @@
       if (session) {
         await sessionRequest(session, 'navigate', { url });
       } else {
-        const result = await api('/browser', task ? { task } : { url });
+        const result = await api('/browser', task ? { task } : template ? { template } : { url });
         session = result.session;
         stored(session);
         frames(session);
-        addMessage(task ? '请在浏览器完成验证，然后点击「验证完成，恢复任务」。' :
-          '网站已打开。登录并进入签到页面后，点击「已登录，录制签到」。');
+        if (task) addMessage('请在浏览器完成验证，然后点击「验证完成，恢复任务」。');
+        else if (template) addMessage('登录站点后，可试跑脚本、定时或立即签到。');
+        else addMessage('网站已打开。登录并进入签到页面后，点击「已登录，录制签到」。');
       }
+      clearDraft();
+      setPhase('record');
+      status('网站已打开。请在浏览器完成登录。', true);
+      screen.focus({ preventScroll: true });
       browser.scrollIntoView({ block: 'nearest' });
     }).finally(() => {
       if (!session) status('等待打开网站');
@@ -221,7 +283,9 @@
   function sendInput(data) {
     if (!session || busy) return;
     const id = session;
-    inputQueue = inputQueue.then(async () => {
+    const pending = inputQueue;
+    inputQueue = (async () => {
+      await pending;
       if (id !== session) return;
       try {
         const result = await sessionRequest(id, 'input', data);
@@ -233,7 +297,7 @@
       } catch (failure) {
         error(failure.message);
       }
-    });
+    })();
   }
 
   function coordinates(event, kind) {
@@ -272,6 +336,7 @@
     sendInput({ kind: 'wheel', delta: Math.max(-2000, Math.min(2000, event.deltaY)) });
   }, { passive: false });
   screen.addEventListener('keydown', (event) => {
+    if (event.isComposing || event.defaultPrevented) return;
     if (event.ctrlKey && event.key.toLowerCase() === 'a') {
       event.preventDefault();
       sendInput({ kind: 'key', key: 'Control+a' });
@@ -303,8 +368,12 @@
     screen.focus();
   });
   el('browser-expand').addEventListener('click', async () => {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await browser.requestFullscreen();
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await browser.requestFullscreen();
+    } catch (_) {
+      error('浏览器未能进入全屏。');
+    }
   });
   el('browser-close').addEventListener('click', () => browserOperation(async () => {
     const id = session;
@@ -327,6 +396,21 @@
     await finishSession(result.url);
   }));
 
+  el('template-test')?.addEventListener('click', () => browserOperation(async () => {
+    const outcome = await sessionRequest(session, 'test', {});
+    addMessage(outcome.result);
+  }));
+
+  el('template-task')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const mode = event.submitter?.value || 'schedule';
+    const clock = event.currentTarget.elements.clock.value;
+    browserOperation(async () => {
+      const result = await sessionRequest(session, 'save', { mode, clock });
+      await finishSession(result.url);
+    });
+  });
+
   async function finishSession(url) {
     const id = session;
     resetBrowser();
@@ -334,55 +418,101 @@
     window.location.assign(url);
   }
 
-  function showDraft(draft) {
-    chat.querySelector('.draft-card')?.remove();
+  function showDraft(draft, saved, moveFocus = true) {
     const card = el('draft-template').content.firstElementChild.cloneNode(true);
     card.querySelector('.draft-site').textContent = draft.site;
+    card.querySelector('.draft-summary').textContent = draft.summary;
     card.querySelector('.draft-stats').textContent = `${draft.steps} 步点击 · ${draft.requests} 条请求 · 拦截 ${draft.blocked} 条`;
-    card.querySelector('.draft-result').textContent = draft.verified ? '网页已显示签到结果，可以保存每日任务。' : '网页未出现可确认的签到结果，请检查签到页面后再录制。';
+    card.querySelector('.draft-result').textContent = draft.verified ? '录制时网页显示了签到结果。' : '录制时未识别到签到成功提示，可先试跑验证。';
     const form = card.querySelector('form');
-    form.hidden = !draft.verified;
     form.elements.name.value = new URL(draft.site).hostname;
+    const full = card.querySelector('[data-full]');
+    full.hidden = draft.full_steps || Boolean(saved);
+    full.addEventListener('click', () => record('full'));
+    for (const [index, step] of draft.script.steps.entries()) {
+      const item = document.createElement('li');
+      item.textContent = [draft.script.labels?.[index], step.text].filter(Boolean).join(' · ');
+      card.querySelector('.draft-steps').append(item);
+    }
+    card.querySelector('pre').textContent = JSON.stringify(draft.script, null, 2);
+    const savedLink = card.querySelector('.draft-template-link');
+    const showSaved = (result) => {
+      savedLink.href = result.url;
+      savedLink.hidden = false;
+      full.hidden = true;
+      if (result.name) form.elements.name.value = result.name;
+      form.elements.name.readOnly = true;
+      setPhase('saved');
+      status('模板已保存', true);
+    };
+    setPhase('review');
+    if (saved) showSaved(saved);
+    card.querySelector('[data-test]').addEventListener('click', () => browserOperation(async () => {
+      const testResult = card.querySelector('.draft-test-result');
+      status('正在试跑签到…');
+      testResult.textContent = '';
+      try {
+        const outcome = await sessionRequest(session, 'test', {});
+        testResult.textContent = outcome.result;
+        status('试跑结束');
+      } catch (failure) {
+        testResult.textContent = failure.message;
+        status('试跑未完成');
+      }
+    }));
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(form));
+      data.mode = event.submitter?.value || 'template';
+      if (!form.elements.name.reportValidity()) return;
       browserOperation(async () => {
-        const submit = form.querySelector('button');
-        submit.disabled = true;
-        try {
-          const saved = await sessionRequest(session, 'save', data);
-          await finishSession(saved.url);
-        } finally {
-          submit.disabled = false;
-        }
+        const result = await sessionRequest(session, 'save', data);
+        if (result.task) await finishSession(result.url);
+        else showSaved(result);
       });
     });
-    addMessage(draft.summary);
-    chat.append(card);
-    chat.scrollTop = chat.scrollHeight;
-    if (window.innerWidth <= 860) chat.closest('.chat-panel').scrollIntoView({ block: 'nearest' });
+    draftPanel.replaceChildren(card);
+    draftPanel.hidden = false;
+    setControls();
+    if (!saved) status('脚本已生成，可以检查或试跑', true);
+    if (moveFocus) card.querySelector('h2').focus();
   }
 
   function record(mode) {
     browserOperation(async () => {
-      status(mode === 'auto' ? '查找签到按钮…' : '正在处理录制…');
+      if (mode === 'auto') status('正在识别并录制签到步骤…');
+      else if (mode === 'finish' || mode === 'retry') status('正在分析录制结果…');
       const retry = el('record-retry');
       retry.hidden = true;
       try {
         const result = await sessionRequest(session, 'record', { mode });
         recording = Boolean(result.manual);
+        recordingStatus = '';
         if (mode === 'cancel') {
-          status('录制已取消');
+          status('录制已取消', true);
         } else if (recording) {
-          addMessage('录制已开始。请在右侧点击签到，看到结果后选择「结束录制并分析」。');
-          status('录制签到中');
+          clearDraft();
+          setPhase('record');
+          if (result.reason && result.recorded_steps) {
+            recordingStatus = `${result.reason}。已保留 ${result.recorded_steps} 步，请从当前页面继续，只录制剩余操作。完成后结束录制。`;
+          } else if (result.reason) {
+            recordingStatus = `${result.reason}。请在当前页面手动操作，完成后结束录制。`;
+          } else {
+            recordingStatus = '正在录制签到。操作完成后点击结束录制。';
+          }
+          status(recordingStatus, true);
+          screen.focus({ preventScroll: true });
         } else {
           showDraft(result.draft);
-          retry.hidden = false;
         }
       } catch (failure) {
         // Retry analysis after a model outage without repeating the site action.
         retry.hidden = failure.status !== 502;
+        if (failure.verification) {
+          recording = false;
+          recordingStatus = '';
+          status('录制已暂停，等待站点验证', true);
+        }
         throw failure;
       }
     });
@@ -396,7 +526,7 @@
 
   async function submitChat(value) {
     if (chatBusy || !value) return;
-    const site = !task && value.match(/^https?:\/\/[^\s<>]+/i);
+    const site = !task && !template && value.match(/^https?:\/\/[^\s<>]+/i);
     if (site) {
       try {
         const url = new URL(site[0]);
@@ -451,10 +581,8 @@
   });
   el('chat-reset').addEventListener('click', () => {
     if (chatBusy) return;
-    const draft = chat.querySelector('.draft-card');
     history.length = 0;
-    chat.innerHTML = welcome;
-    if (draft) chat.append(draft);
+    chat.replaceChildren(...welcome.map((node) => node.cloneNode(true)));
     el('chat-input').focus();
   });
 
@@ -462,6 +590,20 @@
   if (workspace.dataset.browser && previous && /^[A-Za-z0-9_-]{32}$/.test(previous)) {
     session = previous;
     frames(session);
+    setPhase('record');
+    if (!task && !template) void restoreDraft(previous);
   }
+
+  async function restoreDraft(id) {
+    try {
+      const response = await fetch(base + '/browser/' + id + '/draft', { cache: 'no-store' });
+      if (!response.ok) return;
+      const result = await response.json();
+      if (session === id && result?.draft) showDraft(result.draft, result.template, false);
+    } catch (_) {
+      // The frame refresh handles connection and session expiry feedback.
+    }
+  }
+
   setControls();
 })();

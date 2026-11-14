@@ -23,8 +23,8 @@ logger_db_converter = Log("QD.DB.Converter").getlogger()
 
 
 class DBconverter:
-    def __init__(self, path=config.sqlite3.path):
-        self.path = path
+    def __init__(self, path=None):
+        self.path = config.sqlite3.path if path is None else path
         self.db = None
 
     async def convert_new_type(self, db: Optional[DB] = None):
@@ -227,6 +227,7 @@ class DBconverter:
             `disabled` TINYINT NOT NULL DEFAULT 0,
             `public` TINYINT NOT NULL DEFAULT 0,
             `lock` TINYINT NOT NULL DEFAULT 0,
+            `browser` TINYINT NOT NULL DEFAULT 0,
             `fork` INT UNSIGNED NULL,
             `har` MEDIUMBLOB NULL,
             `tpl` MEDIUMBLOB NULL,
@@ -593,43 +594,23 @@ class DBconverter:
             )
 
         if config.db_type == "sqlite3":
-            try:
-                conn = await aiosqlite.connect(f"{config.sqlite3.path}")
+            async with aiosqlite.connect(self.path) as conn:
                 conn.text_factory = bytes
-                cursor = await conn.execute(
-                    "SELECT id, password, userkey, password_md5 FROM user"
-                )
-                for row in await cursor.fetchall():
-                    result = await update_shell(
-                        update(User)
-                        .where(User.id == row[0])
-                        .values(password=row[1], userkey=row[2], password_md5=row[3])
-                    )
-                await cursor.close()
-
-                cursor = await conn.execute(
-                    "SELECT id, init_env, env, session FROM task"
-                )
-                for row in await cursor.fetchall():
-                    result = await update_shell(
-                        update(Task)
-                        .where(Task.id == row[0])
-                        .values(init_env=row[1], env=row[2], session=row[3])
-                    )
-                await cursor.close()
-
-                cursor = await conn.execute("SELECT id, har, tpl FROM tpl")
-                for row in await cursor.fetchall():
-                    result = await update_shell(
-                        update(Tpl)
-                        .where(Tpl.id == row[0])
-                        .values(har=row[1], tpl=row[2])
-                    )
-                await cursor.close()
-
-                await conn.close()
-            except Exception as e:
-                raise e
+                for table, model, columns in (
+                    ("user", User, ("password", "userkey", "password_md5")),
+                    ("task", Task, ("init_env", "env", "session")),
+                    ("tpl", Tpl, ("har", "tpl")),
+                ):
+                    async with conn.execute(
+                        f"SELECT id, {', '.join(columns)} FROM {table}"
+                    ) as cursor:
+                        rows = await cursor.fetchall()
+                    for row in rows:
+                        await update_shell(
+                            update(model).where(model.id == row[0]).values(
+                                **dict(zip(columns, row[1:]))
+                            )
+                        )
 
         try:
             await self.db.user.list(limit=1, fields=("password_md5",))
@@ -781,6 +762,38 @@ class DBconverter:
             if "browser_session" not in str(exc):
                 raise
             await exec_shell("ALTER TABLE `task` ADD `browser_session` MEDIUMBLOB NULL")
+
+        try:
+            await self.db.tpl.list(limit=1, fields=("browser",))
+        except Exception as exc:
+            if "browser" not in str(exc):
+                raise
+            await exec_shell("ALTER TABLE `tpl` ADD `browser` TINYINT NOT NULL DEFAULT 0")
+
+        # Workbench v1 saved the script in the task and created a locked, empty template.
+        async with self.db.transaction() as sql_session:
+            templates = await self.db.tpl.list(
+                fields=("id", "userid"), browser=0, lock=True, _groups=Task.BROWSER_GROUP, sql_session=sql_session,
+            )
+            owners = {template["id"]: template["userid"] for template in templates}
+            if owners:
+                tasks = await self.db.task.list(
+                    fields=("tplid", "userid", "init_env"), limit=None, tplid=list(owners),
+                    browser_state=(Task.BROWSER_READY, Task.BROWSER_VERIFY), sql_session=sql_session,
+                )
+                for task in tasks:
+                    tplid, owner = task["tplid"], task["userid"]
+                    if owners.get(tplid) != owner or not task["init_env"]:
+                        continue
+                    try:
+                        env = await self.db.user.decrypt(owner, task["init_env"], sql_session=sql_session)
+                    except self.db.user.UserDBException:
+                        logger_db_converter.warning("无法读取旧浏览器模板 %s 的任务脚本", tplid)
+                        continue
+                    if isinstance(env, dict) and isinstance(env.get("_qd_browser"), dict):
+                        script = await self.db.user.encrypt(owner, env["_qd_browser"], sql_session=sql_session)
+                        await self.db.tpl.mod(tplid, tpl=script, browser=True, lock=False, sql_session=sql_session)
+                        owners.pop(tplid)
 
         try:
             # deepcode ignore change_to_is: use "is" will cause error

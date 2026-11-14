@@ -29,6 +29,7 @@ from libs.log import Log
 from libs.parse_url import parse_url
 from libs.safe_eval import safe_eval
 from libs.security import resolve_blocked_reason
+from libs.signin_receipt import receipt_log, site_signin_receipt
 
 logger_fetcher = Log("QD.Http.Fetcher").getlogger()
 if config.use_pycurl:
@@ -352,7 +353,7 @@ class Fetcher(object):
             ).decode("ascii")
         return entry
 
-    def run_rule(self, response, rule, env):
+    def run_rule(self, response, rule, env, *, assertion_result=None):
         success = True
         msg = ""
 
@@ -524,9 +525,11 @@ class Fetcher(object):
                     f"(code={response.code}, error={response.error or response.reason})"
                 )
 
+        failed_match = False
         for r in rule.get("failed_asserts") or "":
             if _eval_failed_assert(r):
                 success = False
+                failed_match = True
                 # 消息带上渲染后的断言文本(而非原始 {{ }}), 便于 worker 的瞬时错误分类看到实际
                 # 命中的内容(如 {{err}} -> "service unavailable"), 否则会漏判瞬时错误(Codex#4)。
                 try:
@@ -538,6 +541,8 @@ class Fetcher(object):
                     shown = r
                 msg = f"Fail assert: {json.dumps(shown, ensure_ascii=False)} from failed_asserts"
                 break
+        if assertion_result is not None:
+            assertion_result.update(content=content_ok, status=status_ok, failed=failed_match)
 
         # [reliability] 弱判定可见化: 本步判"成功"却没有任何"内容成功断言"命中(仅凭 HTTP 状态,
         # 或整个 step 无成功断言) -> 过期会话/错误页极易被记为签到成功。默认仅告警(不改判定,
@@ -682,6 +687,8 @@ class Fetcher(object):
                 failed_asserts=en.get("rule", {}).get("failed_asserts", []),
                 extract_variables=en.get("rule", {}).get("extract_variables", []),
             )
+            if en.get("rule", {}).get("signin_receipt") is True:
+                entry["signin_receipt"] = True
             entries.append(entry)
         return dict(
             log=dict(
@@ -838,6 +845,8 @@ class Fetcher(object):
         curl_encoding=config.curl_encoding,
         curl_content_length=config.curl_length,
         empty_retry=config.empty_retry,
+        *,
+        assertion_result=None,
     ):
         """
         obj = {
@@ -870,7 +879,19 @@ class Fetcher(object):
         )
 
         env["session"].extract_cookies_to_jar(response.request, response)
-        success, msg = self.run_rule(response, rule, env)
+        if assertion_result is None:
+            success, msg = self.run_rule(response, rule, env)
+        else:
+            success, msg = self.run_rule(response, rule, env, assertion_result=assertion_result)
+        if success and rule.get("signin_receipt") is True and not any(
+            item.get("name") == "__log__" for item in rule.get("extract_variables") or []
+        ):
+            receipt = site_signin_receipt(response, obj["request"]["url"])
+            if receipt["outcome"] == "failed":
+                success = False
+                msg = receipt["message"]
+            elif receipt["outcome"] in ("signed_in", "already_signed") or not env["variables"].get("__log__"):
+                env["variables"]["__log__"] = receipt_log(receipt)
 
         return {
             "success": success,
@@ -970,6 +991,8 @@ class Fetcher(object):
         proxies=config.proxies,
         request_limit=config.task_request_limit,
         tpl_length=0,
+        *,
+        observe_step=None,
     ) -> Tuple[Dict, int]:
         """
         do a fetch of hole tpl
@@ -1039,6 +1062,7 @@ class Fetcher(object):
                             proxies=[proxy],
                             request_limit=request_limit,
                             tpl_length=tpl_length,
+                            observe_step=observe_step,
                         )
                     env["variables"]["loop_depth"] = str(
                         int(env["variables"].get("loop_depth", "0")) - 1
@@ -1055,6 +1079,7 @@ class Fetcher(object):
                             proxies=[proxy],
                             request_limit=request_limit,
                             tpl_length=tpl_length,
+                            observe_step=observe_step,
                         )
             elif block["type"] == "while":
                 start_time = time.perf_counter()
@@ -1093,6 +1118,7 @@ class Fetcher(object):
                             proxies=[proxy],
                             request_limit=request_limit,
                             tpl_length=tpl_length,
+                            observe_step=observe_step,
                         )
                     else:
                         if config.debug:
@@ -1136,6 +1162,7 @@ class Fetcher(object):
                         proxies=[proxy],
                         request_limit=request_limit,
                         tpl_length=tpl_length,
+                        observe_step=observe_step,
                     )
                 else:
                     _, request_limit = await self.do_fetch(
@@ -1144,9 +1171,12 @@ class Fetcher(object):
                         proxies=[proxy],
                         request_limit=request_limit,
                         tpl_length=tpl_length,
+                        observe_step=observe_step,
                     )
             elif block["type"] == "request":
                 entry = block["entry"]
+                assertions = {}
+                observation = {"assertion_result": assertions} if observe_step else {}
                 try:
                     request_limit -= 1
 
@@ -1197,14 +1227,19 @@ class Fetcher(object):
                             env=env,
                         ),
                         proxy=proxy,
+                        **observation,
                     )
                     env = result["env"]
                 except Exception as e:
+                    if observe_step:
+                        observe_step(entry, None, False, {})
                     if config.debug:
                         logger_fetcher.exception(e)
                     raise Exception(
                         f"Failed at {entry['idx']}/{tpl_length} request, \\r\\nError: {e}, \\r\\nRequest URL: {entry['request']['url']}"
                     ) from e
+                if observe_step:
+                    observe_step(entry, result["response"], result["success"], assertions)
                 if not result["success"]:
                     raise Exception(
                         f"Failed at {entry['idx']}/{tpl_length} request, \\r\\n{result['msg']}, \\r\\nRequest URL: {entry['request']['url']}"

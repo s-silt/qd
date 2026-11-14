@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ tpl.sitename }} · QD 模板{% endblock %}
+{% block body %}
+{{ utils.header(current_user) }}
+<main class="container">
+  <p class="small"><a href="/my/#tplsection">我的模板</a></p>
+  <h2>{{ tpl.sitename }}</h2>
+  <p><span class="label label-info">浏览器签到</span> {{ script.origin }}</p>
+  <h3 class="h4">签到脚本</h3>
+  <ol>
+    {% for step in script.steps %}
+    <li>{{ script.labels[loop.index0] if script.labels else '执行录制的操作' }}{% if step.text %} · {{ step.text }}{% endif %}</li>
+    {% endfor %}
+  </ol>
+  <details>
+    <summary>查看脚本 JSON</summary>
+    <pre>{{ script | tojson(indent=2) }}</pre>
+  </details>
+  <p style="margin-top: 16px">
+    <a class="btn btn-primary" href="/ai-workbench/?template={{ tpl.id }}">登录站点并试跑</a>
+    <button type="button" class="btn btn-default modal_load" href="/task/new?tplid={{ tpl.id }}">新建任务</button>
+  </p>
+  {% if tasks %}
+  <h3 class="h4">使用此模板的任务</h3>
+  <ul>
+    {% for task in tasks %}<li><a href="/task/{{ task.id }}/log">{{ task.note or '任务 #' ~ task.id }}</a></li>{% endfor %}
+  </ul>
+  {% endif %}
+</main>
+{{ utils.modal_load() }}
+{% endblock %}

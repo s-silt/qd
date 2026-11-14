@@ -1,0 +1,19 @@
+{% macro header(title, current='', templateid=none) %}
+<header class="qd-header">
+  <div class="qd-heading">
+    <a class="brand" href="/my/" aria-label="QD 首页">QD<span class="brand-dot" aria-hidden="true"></span></a>
+    <h1>{{ title }}</h1>
+  </div>
+  <nav aria-label="签到模板导航">
+    <ul class="qd-nav" role="list">
+      <li><a href="/my/#tplsection">我的模板</a></li>
+      <li>{% if current == 'author' %}<span aria-current="page">AI 签到工作台</span>{% elif current == 'browser' %}<a href="/ai-workbench/">HAR 工作台</a>{% else %}<a href="/ai-workbench/">AI 签到工作台</a>{% endif %}</li>
+      <li>{% if current == 'editor' %}<span aria-current="page">模板编辑器</span>{% else %}<a href="/har/edit">模板编辑器</a>{% endif %}</li>
+      {% if current == 'browser' %}
+        <li><span aria-current="page">在线录制</span></li>
+        {% if templateid %}<li><a href="/tpl/{{ templateid }}/edit">查看模板</a></li>{% endif %}
+      {% endif %}
+    </ul>
+  </nav>
+</header>
+{% endmacro %}

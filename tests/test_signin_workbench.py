@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import time
 from types import SimpleNamespace
 
 import aiohttp
@@ -21,9 +23,12 @@ import libs.browser_egress as egress
 import libs.mcrypto as crypto
 import libs.signin_workbench as signin
 import worker
-from db import DB, Task, basedb
+from web.handlers import ai_workbench
+from db import Task, basedb
 from db.db_converter import DBconverter
 from libs.ai.har_pipeline import preprocess_har
+from libs.signin_sessions import admit_session
+from run import _init_database
 from web.app import Application
 
 
@@ -76,6 +81,36 @@ def test_legacy_har_analysis_redacts_captured_values():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            "www.example.com\nPerforming security verification\n"
+            "This page is displayed while the website verifies you are not a bot.\nVerifying...",
+            True,
+        ),
+        ("Account guide: Performing security verification on your own website.", False),
+    ],
+)
+async def test_security_verification_page_detection(body, expected):
+    class Page:
+        url = "https://example.com/checkin"
+        frames = []
+
+        def locator(self, selector):
+            assert selector == "body" or "input" in selector
+            return self
+
+        async def count(self):
+            return 0
+
+        async def inner_text(self, *, timeout):
+            return body
+
+    assert await signin.challenge_visible(Page()) is expected
+
+
+@pytest.mark.asyncio
 async def test_clip_storage_state_to_target_host():
     class Context:
         async def storage_state(self, *, indexed_db):
@@ -104,6 +139,37 @@ async def test_browser_egress_limits_direct_addresses():
 
 
 @pytest.mark.asyncio
+async def test_session_admission_reserves_slot_while_browser_opens(monkeypatch):
+    opening = asyncio.Event()
+    ready = asyncio.Event()
+    sessions = {}
+
+    async def open_fixture(session, state=None):
+        opening.set()
+        await ready.wait()
+        session.page = SimpleNamespace(is_closed=lambda: False)
+
+    monkeypatch.setattr(config, "ai_workbench_browser", True)
+    monkeypatch.setattr(signin.playwright_capture, "is_available", lambda: True)
+    monkeypatch.setattr(signin.playwright_capture, "PLAYWRIGHT_MAX_CONCURRENT", 1)
+    monkeypatch.setattr(signin.BrowserSession, "open", open_fixture)
+
+    url = "https://example.com/checkin"
+    first = asyncio.create_task(admit_session(sessions, 1, url=url))
+    await opening.wait()
+    try:
+        with pytest.raises(signin.WorkbenchError):
+            await admit_session(sessions, 1, url=url)
+        with pytest.raises(signin.WorkbenchError):
+            await admit_session(sessions, 2, url=url)
+        assert len(sessions) == 1
+    finally:
+        ready.set()
+        session = await first
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ai_workbench_browser", True)
     monkeypatch.setattr(config, "ai_api_key", "")
@@ -114,7 +180,9 @@ async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypa
         crypto, "password_hash", lambda word, salt=None: password_hash(word, salt, iterations=10)
     )
     monkeypatch.setattr(signin.playwright_capture, "is_available", lambda: True)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'workbench.db'}")
+    db_path = tmp_path / "workbench.db"
+    monkeypatch.setattr(config.sqlite3, "path", str(db_path))
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
     monkeypatch.setattr(
         basedb,
         "async_session",
@@ -128,8 +196,14 @@ async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypa
 
     async def model_reply(request):
         assert "Authorization" not in request.headers
-        model_calls.append(await request.json())
-        return web.json_response({"choices": [{"message": {"content": "已分析脱敏记录。"}}]})
+        payload = await request.json()
+        model_calls.append(payload)
+        content = payload["messages"][-1]["content"]
+        if '"actions"' in content:
+            content = json.dumps({"summary": "已分析脱敏记录。", "steps": [{"id": 1, "label": "执行签到"}]})
+        else:
+            content = "已分析脱敏记录。"
+        return web.json_response({"choices": [{"message": {"content": content}}]})
 
     model_app = web.Application()
     model_app.router.add_post("/v1/chat/completions", model_reply)
@@ -140,9 +214,8 @@ async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypa
     model_port = model_runner.addresses[0][1]
     monkeypatch.setattr(config, "ai_base_url", f"http://127.0.0.1:{model_port}/v1")
 
-    db = DB()
+    db = await _init_database(logging.getLogger(__name__))
     converter = DBconverter()
-    await converter.convert_new_type(db)
     await db.user.add("owner@example.com", "example-fixture-pass", "127.0.0.1")
     await db.user.add("guest@example.com", "example-other-pass", "127.0.0.1")
     app = Application(db)
@@ -160,7 +233,7 @@ async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypa
     async def open_fixture(session, state=None):
         if session.taskid:
             assert state["cookies"][0]["value"] == private_cookie
-        session.page = SimpleNamespace(url=site_url)
+        session.page = SimpleNamespace(url=site_url, is_closed=lambda: False)
 
     async def state_fixture(session, origin):
         assert origin == "https://example.com"
@@ -171,12 +244,18 @@ async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypa
 
     steps = [{"selector": "#checkin", "tag": "button", "text": "签到"}]
 
+    async def replay_success(script, state):
+        assert script["steps"] == steps
+        assert state["cookies"][0]["value"] == private_cookie
+        return "站点页面确认签到成功", state
+
     async def paused_replay(script, state):
         assert script["steps"] == steps
         assert state["cookies"][0]["value"] == private_cookie
         raise signin.VerificationNeeded("站点要求重新验证")
 
     monkeypatch.setattr(worker, "replay", paused_replay)
+    monkeypatch.setattr(ai_workbench, "replay", replay_success)
     headers = {"X-QD-Workbench": "1"}
     try:
         async with aiohttp.ClientSession(cookies={"user": token(1)}, headers=headers) as client:
@@ -205,9 +284,25 @@ async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypa
                 summaries=[signin.capture_summary(f"{site_url}?day={private_cookie}", "POST", "fetch", 200)],
             )
             response = await client.post(f"{url}/ai-workbench/browser/{sid}/record", json={"mode": "retry"})
-            assert response.status == 200 and (await response.json())["draft"]["verified"]
+            assert response.status == 200
+            draft = (await response.json())["draft"]
+            assert draft["verified"] and draft["script"]["steps"] == steps
+            assert draft["script"]["labels"] == ["执行签到"]
             assert private_cookie not in json.dumps(model_calls)
             assert "example.com" not in model_calls[-1]["messages"][-1]["content"]
+            assert "#checkin" not in model_calls[-1]["messages"][-1]["content"]
+            response = await client.post(f"{url}/ai-workbench/browser/{sid}/test", json={})
+            assert response.status == 200 and (await response.json())["result"] == "站点页面确认签到成功"
+            response = await client.post(f"{url}/ai-workbench/browser/{sid}/save", json={"name": "Test site", "mode": "template"})
+            assert response.status == 200 and (await response.json())["template"] == 1
+            tpl = await db.tpl.get(1)
+            assert tpl["browser"] and not tpl["lock"]
+            assert (await db.user.decrypt(1, tpl["tpl"]))["steps"] == steps
+            assert await db.task.list(1) == []
+            response = await client.get(f"{url}/tpl/1/edit")
+            detail = await response.text()
+            assert response.status == 200 and "执行签到" in detail and private_cookie not in detail
+            assert "登录站点并创建任务" in await (await client.get(f"{url}/task/new?tplid=1")).text()
             for _ in range(2):
                 response = await client.post(
                     f"{url}/ai-workbench/browser/{sid}/save", json={"name": "Test site", "clock": "08:00"}
@@ -217,6 +312,7 @@ async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypa
 
             task = await db.task.get(1)
             assert private_cookie.encode() not in task["browser_session"]
+            await db.task.mod(1, next=int(time.time()) - 1)
             assert await worker.BaseWorker(db).do(task) is False
             task = await db.task.get(1)
             assert task["browser_state"] == Task.BROWSER_VERIFY and task["next"] is None
@@ -233,13 +329,21 @@ async def test_workbench_save_pause_resume_and_model_boundary(tmp_path, monkeypa
             task = await db.task.get(1)
             assert task["browser_state"] == Task.BROWSER_READY and task["next"] and not task["disabled"]
 
-            async def replay_success(script, state):
-                return "站点页面确认签到成功", state
-
             monkeypatch.setattr(worker, "replay", replay_success)
-            response = await client.post(f"{url}/task/1/run", allow_redirects=False)
-            assert response.status == 302 and response.headers["Location"] == "/task/1/log"
+            response = await client.post(f"{url}/task/1/run", headers={"X-Requested-With": "XMLHttpRequest"})
+            assert response.status == 200 and "签到成功" in await response.text()
             assert (await db.task.get(1))["success_count"] == 1
+            await client.post(f"{url}/ai-workbench/browser/{sid}/close", json={})
+            response = await client.post(f"{url}/ai-workbench/browser", json={"template": 1})
+            assert response.status == 200
+            sid = (await response.json())["session"]
+            response = await client.post(f"{url}/ai-workbench/browser/{sid}/save", json={"mode": "run", "clock": "09:10"})
+            assert response.status == 200 and (await response.json())["task"] == 2
+            assert (await db.task.get(2))["success_count"] == 1
+            assert (await db.task.get(2))["tplid"] == 1
+            assert (await client.post(f"{url}/tpl/1/del", allow_redirects=False)).status == 409
+            await client.post(f"{url}/task/1/del", allow_redirects=False)
+            assert await db.task.get(1) is None and await db.tpl.get(1)
     finally:
         for session in app.workbench_sessions.values():
             await session.close()

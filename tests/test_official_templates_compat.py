@@ -4,8 +4,8 @@
 
 官方仓库通过「公共模板订阅」拉取 tpls_history.json:
   - 每条 har[].content 为 base64(QD 模板 JSON 数组)，或 content=="" 时按 filename 拉 .har
-  - .har 文件本身通常已是 QD 步骤数组 (request/rule)，不是浏览器 HAR 的 log.entries
-  - 前端 HARDATA→Base64.decode→utils.tpl2har；保存时 har2tpl 再变回数组给 Fetcher
+  - .har 内容可以是 QD 步骤数组 (request/rule) 或结构化 HAR (log.entries)
+  - 前端按 data.log 分流导入，保存时 har2tpl 转为步骤数组给 Fetcher
 
 本测试不依赖网络；优先读 Desktop 旁的浅克隆目录，找不到则 skip。
 """
@@ -71,7 +71,10 @@ def _decode_entry(meta: Dict[str, Any]) -> List[Dict[str, Any]]:
         path = os.path.join(OFFICIAL_DIR, filename)
         with open(path, encoding="utf-8") as f:
             tpl = json.load(f)
-    assert isinstance(tpl, list) and tpl, "official tpl must be non-empty QD array"
+    if isinstance(tpl, dict):
+        assert isinstance(tpl.get("log", {}).get("entries"), list), "official HAR must have entries"
+        tpl = _har2tpl(tpl)
+    assert isinstance(tpl, list) and tpl, "official template must contain selected QD steps"
     return tpl
 
 
