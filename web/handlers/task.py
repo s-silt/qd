@@ -335,6 +335,7 @@ class TaskRunHandler(BaseHandler):
             await self.db.task.get(taskid, fields=("id", "userid", "browser_state")), "w"
         )
         if task["browser_state"]:
+            taskid = int(task["id"])
             if task["browser_state"] == Task.BROWSER_VERIFY:
                 if self.request.headers.get("X-Requested-With") == "XMLHttpRequest":
                     return await self.render("task_browser_result.html", title="需要重新验证", taskid=taskid, verify=True)

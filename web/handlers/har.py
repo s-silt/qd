@@ -32,7 +32,7 @@ class HAREditor(BaseHandler):
             tpl = await self.db.tpl.get(id, fields=("id", "userid", "browser", "tplurl"))
             if tpl and tpl.get("browser"):
                 self.check_permission(tpl, "w")
-                self.redirect(f"/tpl/{id}/browser")
+                self.redirect(f"/tpl/{int(tpl['id'])}/browser")
                 return
         filename, _, repository = self.get_argument("tplurl", "|").partition("|")
         harname = self.get_argument("name", filename)
