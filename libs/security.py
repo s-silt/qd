@@ -33,12 +33,14 @@ BLOCK_PRIVATE_IP = os.getenv("PLAYWRIGHT_BLOCK_PRIVATE_IP", "").lower() in (
 _NUMERIC_IPV4_RE = re.compile(r"^[0-9a-fA-FxX.]+$")
 
 
-def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
+def _ip_is_blocked(ip: ipaddress._BaseAddress, public_only: bool = False) -> bool:
     # IPv6 内可能内嵌 IPv4 (::ffff:127.0.0.1 映射 / 2002::/16 6to4),
     # 先按内嵌的 IPv4 判一次, 防止经映射地址绕过环回 / 元数据拦截。
     if isinstance(ip, ipaddress.IPv6Address):
+        if public_only and (ip.teredo or ip in ipaddress.ip_network("64:ff9b::/96")):
+            return True
         for embedded in (ip.ipv4_mapped, ip.sixtofour):
-            if embedded is not None and _ip_is_blocked(embedded):
+            if embedded is not None and _ip_is_blocked(embedded, public_only):
                 return True
     if (
         ip.is_loopback           # 127.0.0.0/8 全段 + ::1
@@ -50,6 +52,8 @@ def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
         return True
     # 私网 (RFC1918 / IPv6 唯一本地 fc00::/7) 默认放行 (内网部署),
     # 仅在显式收紧时拦截。
+    if public_only and not ip.is_global:
+        return True
     if BLOCK_PRIVATE_IP and ip.is_private:
         return True
     return False
@@ -74,7 +78,7 @@ def _parse_ip_literal(host: str) -> Optional[ipaddress._BaseAddress]:
     return None
 
 
-def resolve_blocked_reason(host: str) -> str:
+def resolve_blocked_reason(host: str, *, public_only: bool = False) -> str:
     """检查 host (IP 字面量或域名) 是否解析到被禁止的地址段。
 
     返回拦截原因字符串; 放行时返回空字符串。
@@ -87,21 +91,21 @@ def resolve_blocked_reason(host: str) -> str:
     # 1. 直接是 IP 字面量 (含十进制 / 八进制 / 十六进制 / 短写 IPv4 绕过写法)
     ip = _parse_ip_literal(host)
     if ip is not None:
-        return "目标地址属于受限网段" if _ip_is_blocked(ip) else ""
+        return "目标地址属于受限网段" if _ip_is_blocked(ip, public_only) else ""
 
     # 2. 域名: 尽力解析所有 A/AAAA 记录, 任一落入受限段即拦截 (防 DNS rebinding)
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
         # 解析失败交给后续真实请求处理, 此处不误杀
-        return ""
+        return "目标地址无法解析" if public_only else ""
     for info in infos:
         addr = info[4][0]
         try:
             ip = ipaddress.ip_address(addr.split("%")[0])
         except ValueError:
             continue
-        if _ip_is_blocked(ip):
+        if _ip_is_blocked(ip, public_only):
             return f"域名 {host} 解析到受限地址 {addr}"
     return ""
 

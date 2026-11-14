@@ -15,6 +15,7 @@
     <h2>
       我的任务
       <a href="/task/new" class="btn btn-default btn-xs modal_load glyphicon glyphicon-plus"></a>
+      <a href="/ai-workbench/" class="btn btn-primary"><i class="fa fa-comment" aria-hidden="true"></i> AI 签到工作台</a>
       {% if adminflg %}
       <button type="button" class="btn btn-default modal_load" data-load-method="GET" href="/user/{{ userid }}/manage" title="管理用户">管理用户
       </button>
@@ -102,16 +103,26 @@
 
           <td style="text-align:center">
             <div class="btn-group btn-group-xs" role="group">
-              {% if task.tpl %}
+              {% if task.browser_state == browser_verify %}
+              <a class="btn btn-warning" href="/ai-workbench/?task={{ task.id }}">重新验证</a>
+              {% elif task.browser_state %}
+              <form class="browser-run-form" method="POST" action="/task/{{ task.id }}/run">
+                <button type="submit" class="btn btn-default btn-xs" title="立即执行该任务">执行</button>
+              </form>
+              <a class="btn btn-default" href="/ai-workbench/?task={{ task.id }}">更新登录</a>
+              {% elif task.tpl %}
               <button type="button" class="btn btn-default modal_load" href="/task/{{ task.id }}/edit" title="修改任务信息">修改</button>
               {% else %}
               <a class="btn btn-default" data-method="POST" href="/task/{{ task.id }}/del" data-confirm="是否要删除任务?" title="删除任务">删除</a>
               {% endif %}
+              {% if not task.browser_state %}
               <button type="button" class="btn btn-default modal_load" data-load-method="POST" href="/task/{{ task.id }}/run" title="立即执行该任务">执行</button>
               <a class="btn btn-default" href="/tpl/{{ task.tplid }}/edit?taskid={{ task.id }}" target="_blank" title="查看模板数据">模板</a>
+              {% endif %}
               <button type="button" class="btn btn-default modal_load" data-load-method="GET" href="/task/{{ task.id }}/settime" title="修改执行时间">定时</button>
               <a type="button" class="btn btn-default" href="/task/{{ task.id }}/log" target="_blank" title="查看执行日志">日志</a>
               <button type="button" class="btn btn-default modal_load" data-load-method="GET" href="/task/{{ task.id }}/group" title="将任务分组">分组</button>
+              {% if task.browser_state %}<a class="btn btn-default" data-method="POST" href="/task/{{ task.id }}/del" data-confirm="是否要删除任务?">删除</a>{% endif %}
             </div>
           </td>
 
@@ -189,9 +200,11 @@
               <a class="btn btn-default" href="/tpl/{{ tpl.id }}/edit" target="_blank" title="编辑模板数据">编辑</a>
               <a class="btn btn-default " data-method="POST" href="/tpl/{{ tpl.id }}/del" data-confirm="是否要删除模板?" title="删除模板数据">删除</a>
               {% endif %}
+              {% if not (tpl.lock and tpl._groups == browser_group) %}
               <button type="button" class="btn btn-default modal_load" href="/task/new?tplid={{ tpl.id }}" title="通过此模板新建定时任务">新建</button>
               <button type="button" class="btn btn-default modal_load" href="/tpl/{{ tpl.id }}/push" title="发布自己创建的模板">发布</button>
               <button type="button" class="btn btn-default modal_load" data-load-method="GET" href="/tpl/{{ tpl.id }}/group" title="将模板分组">分组</button>
+              {% endif %}
             </div>
           </td>
 

@@ -1,5 +1,15 @@
 .git
 .github
+.env
+.env.*
+local_config.py
+config/.aes_key
+config/.cookie_secret
+config/*.db*
+config/*.sqlite*
+config/*.json
+*.pem
+*.key
 __pycache__
 *.pyc
 *.pyo

@@ -11,6 +11,7 @@ from codecs import escape_decode
 from tornado.web import HTTPError, authenticated
 
 import config
+from db.task import Task
 from libs.parse_url import parse_url
 from web.handlers.base import BaseHandler, logger_web_handler
 
@@ -19,7 +20,9 @@ class TPLPushHandler(BaseHandler):
     @authenticated
     async def get(self, tplid):
         # user = self.current_user
-        tpl = await self.db.tpl.get(tplid, fields=('id', 'userid', 'sitename'))
+        tpl = await self.db.tpl.get(tplid, fields=('id', 'userid', 'sitename', 'lock', '_groups'))
+        if tpl and tpl.get('lock') and tpl.get('_groups') == Task.BROWSER_GROUP:
+            raise HTTPError(400, reason="浏览器任务使用当前账号的登录状态")
         if not self.permission(tpl, 'w'):
             self.evil(+5)
             await self.finish('<span class="alert alert-danger">没有权限</span>')
@@ -35,7 +38,9 @@ class TPLPushHandler(BaseHandler):
         user = self.current_user
         tplid = int(tplid)
         async with self.db.transaction() as sql_session:
-            tpl = await self.db.tpl.get(tplid, fields=('id', 'userid', ), sql_session=sql_session)
+            tpl = await self.db.tpl.get(tplid, fields=('id', 'userid', 'lock', '_groups'), sql_session=sql_session)
+            if tpl and tpl.get('lock') and tpl.get('_groups') == Task.BROWSER_GROUP:
+                raise HTTPError(400, reason="浏览器任务使用当前账号的登录状态")
             if not self.permission(tpl, 'w'):
                 self.evil(+5)
                 await self.finish('<span class="alert alert-danger">没有权限</span>')
@@ -205,7 +210,9 @@ class TPLGroupHandler(BaseHandler):
                 target_group = 'None'
 
         # 校验模板归属当前用户, 防止越权修改他人模板分组 (IDOR)
-        self.check_permission(await self.db.tpl.get(tplid, fields=('id', 'userid')), 'w')
+        tpl = self.check_permission(await self.db.tpl.get(tplid, fields=('id', 'userid', 'lock', '_groups')), 'w')
+        if tpl.get('lock') and tpl.get('_groups') == Task.BROWSER_GROUP:
+            raise HTTPError(400, reason="请在任务列表调整浏览器任务的分组")
         await self.db.tpl.mod(tplid, _groups=target_group)
 
         self.redirect('/my/')

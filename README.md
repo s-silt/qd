@@ -71,6 +71,19 @@ QD [v20261002] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 3. **[AI 自动生成签到模板](./web/docs/zh_CN/guide/ai-sign-template.md)** —— 把抓到的 HAR 一键交给 AI（DeepSeek / OpenAI / 通义 / 本地 Ollama）自动识别签到接口，生成 QD 模板
 4. **[URL 自动抓包](./web/docs/zh_CN/guide/auto-capture.md)** —— 给 URL + Cookie，QD 自动用 Playwright 加载页面、找签到按钮、录制 HAR 并交给 AI 生成模板，一气呵成
 
+### AI 签到工作台
+
+从「我的任务」打开 **AI 签到工作台**（`/ai-workbench/`）。对话区可打开网站并向自建模型提问。在线浏览器区可直接登录、拖动滑块、输入验证码或短信码，以及显示微信二维码并切换登录弹窗。
+
+1. 给 QD 配置 `AI_BASE_URL`（OpenAI 兼容接口，例如 `http://你的模型服务:11434/v1`）、`AI_MODEL` 和 `AI_API_KEY`。仅在信任且无需密钥的自建服务上启用 `AI_ALLOW_NO_KEY=true`。
+2. 设置 `AI_WORKBENCH_BROWSER=true`，使用支持 Chromium 的构建、单进程 Web 服务和独立的 `COOKIE_SECRET`、`AES_KEY`。Docker Compose 可在项目目录的 `.env` 设置这些变量后执行 `docker compose up -d --build`。已有数据库请保留现有的安全密钥。使用示例 `AES_KEY` 的旧实例需要先迁移加密数据再换密钥。源码运行时可用 `playwright install chromium` 安装浏览器，或用 `PLAYWRIGHT_CHROMIUM_PATH` 指定已安装的 Chromium。
+3. 打开允许自动签到的网站，在浏览器完成登录和验证，进入签到页面。点击「已登录，录制签到」。若站点按钮无法唯一识别，按提示手动点击，再结束录制。
+4. 查看脱敏的请求摘要和站点结果，设置每天执行的服务器时间。定时器使用加密保存的站点 Cookie、Local Storage 和 IndexedDB 回放录制操作。站点要求重新验证时任务会暂停，从任务列表或执行日志进入「重新验证」即可恢复。
+
+验证码、短信和扫码由用户在站点完成。模型只收到签到请求的方法、脱敏路径、类型、状态码和本地判定结果。登录视图、账号密码、验证码、请求头和正文都留在 QD 与目标网站之间。浏览器支持公网 HTTP(S) 标准端口，站点白名单启用时需包含用到的登录域和资源域。站点改版、登录状态失效或出现无法识别的结果时，可手动验证或重新录制。
+
+浏览器任务的登录状态仅保存在加密数据库中。普通 JSON 模板备份会跳过浏览器任务。迁移浏览器任务时使用完整数据库备份和原有加密密钥。
+
 开箱即用示例：
 
 - **[NodeSeek 每日自动签到](./web/docs/zh_CN/guide/nodeseek-checkin.md)** —— 现成模板 [`templates/nodeseek-signin.json`](./templates/nodeseek-signin.json)，配置 Cookie 即可每天自动签到领鸡腿（含 Cloudflare 处理说明）。

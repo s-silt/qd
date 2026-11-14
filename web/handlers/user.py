@@ -20,6 +20,7 @@ from tornado import gen, iostream
 from tornado.web import authenticated
 
 import config
+from db.task import Task
 from libs import mcrypto as crypto
 from libs.funcs import Pusher
 from web.handlers.base import BaseHandler, logger_web_handler
@@ -503,13 +504,15 @@ class UserDBHandler(BaseHandler):
 
                     if 'backuptplsbtn' in envs:
                         tpls = []
-                        for tpl in await self.db.tpl.list(userid=userid, fields=('id', 'siteurl', 'sitename', 'banner', 'note', 'fork', '_groups', 'har', 'tpl', 'variables', 'init_env'), limit=None, sql_session=sql_session):
+                        for tpl in await self.db.tpl.list(userid=userid, fields=('id', 'siteurl', 'sitename', 'banner', 'note', 'fork', '_groups', 'har', 'tpl', 'variables', 'init_env', 'lock'), limit=None, sql_session=sql_session):
+                            if tpl.pop('lock') and tpl['_groups'] == Task.BROWSER_GROUP:
+                                continue
                             tpl['tpl'] = await self.db.user.decrypt(userid, tpl['tpl'], sql_session=sql_session)
                             tpl['har'] = await self.db.user.decrypt(userid, tpl['har'], sql_session=sql_session)
                             tpls.append(tpl)
 
                         tasks = []
-                        for task in await self.db.task.list(userid, fields=('id', 'tplid', 'retry_count', 'retry_interval', 'note', 'disabled', '_groups', 'init_env', 'env', 'ontimeflg', 'ontime', 'pushsw', 'newontime'), limit=None, sql_session=sql_session):
+                        for task in await self.db.task.list(userid, fields=('id', 'tplid', 'retry_count', 'retry_interval', 'note', 'disabled', '_groups', 'init_env', 'env', 'ontimeflg', 'ontime', 'pushsw', 'newontime'), limit=None, browser_state=0, sql_session=sql_session):
                             task['init_env'] = await self.db.user.decrypt(userid, task['init_env'], sql_session=sql_session)
                             task['env'] = await self.db.user.decrypt(userid, task['env'], sql_session=sql_session) if task['env'] else None
                             tasks.append(task)

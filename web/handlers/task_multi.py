@@ -70,7 +70,7 @@ class TaskMultiOperateHandler(BaseHandler):
             for taskid, selected in env['selectedtasks'].items():
                 if selected:
                     async with self.db.transaction() as sql_session:
-                        task = await self.db.task.get(taskid, fields=('id', 'note', 'tplid', 'userid'), sql_session=sql_session)
+                        task = await self.db.task.get(taskid, fields=('id', 'note', 'tplid', 'userid', 'browser_state'), sql_session=sql_session)
                         if task:
                             if task['userid'] == int(userid):
                                 if tasktype == 'disable':
@@ -82,6 +82,8 @@ class TaskMultiOperateHandler(BaseHandler):
                                     for log in logs:
                                         await self.db.tasklog.delete(log['id'], sql_session=sql_session)
                                     await self.db.task.delete(taskid, sql_session=sql_session)
+                                    if task.get('browser_state'):
+                                        await self.db.tpl.delete(task['tplid'], sql_session=sql_session)
                                 if tasktype == 'setgroup':
                                     group_env = env['setgroup']
                                     new_group = group_env['newgroup'].strip()

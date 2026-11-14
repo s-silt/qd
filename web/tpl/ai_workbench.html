@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI 签到工作台 · QD</title>
+  <link rel="icon" href="{{ static_url('img/icon.png') }}">
+  <link rel="stylesheet" href="{{ static_url('components/Font-Awesome/css/all.min.css') }}">
+  <link rel="stylesheet" href="{{ static_url('css/ai_workbench.css') }}">
+  <script defer src="{{ static_url('components/ai_workbench.js') }}"></script>
+</head>
+<body>
+  <div class="workspace" id="workbench" data-task="{{ taskid }}" data-model="{{ 'ready' if model_enabled else 'off' }}" data-browser="{{ 'ready' if browser_ready else '' }}">
+    <header class="app-bar">
+      <a class="brand" href="/my/" aria-label="QD 首页">QD<span class="brand-dot"></span></a>
+      <span class="divider" aria-hidden="true"></span>
+      <h1>AI 签到工作台</h1>
+      <a class="back-link" href="/my/"><i class="fa fa-th-list" aria-hidden="true"></i> 我的任务</a>
+    </header>
+
+    <main class="workbench-grid">
+      <section class="panel chat-panel" aria-label="AI 对话">
+        <header class="panel-head">
+          <span class="panel-icon"><i class="far fa-comment-alt" aria-hidden="true"></i></span>
+          <div class="panel-title"><h2>签到助手</h2><p title="{{ model }}">{{ model if model_enabled else '模型待配置' }}</p></div>
+          <button class="icon-button" id="chat-reset" type="button" title="新对话" aria-label="新对话"><i class="fa fa-pen" aria-hidden="true"></i></button>
+        </header>
+        <div class="chat-scroll" id="chat-scroll" aria-live="polite" role="log">
+          <div class="message assistant">
+            <span class="avatar" aria-hidden="true"><i class="fa fa-bolt"></i></span>
+            <div class="message-content">
+              {% if taskid %}
+              <strong>恢复 {{ task_name }}</strong>
+              <p>打开浏览器完成站点验证，返回签到页面后恢复原任务。</p>
+              {% else %}
+              <strong>想让哪个网站每天自动签到？</strong>
+              <p>把网址发给我。在右侧浏览器登录后，QD 会录制签到操作并生成每日任务。</p>
+              {% endif %}
+            </div>
+          </div>
+          {% if not taskid %}
+          <div class="chat-prompts" id="chat-prompts">
+            <button class="suggestion" type="button" data-prompt="怎样录制一次签到？">怎样录制签到？</button>
+            <button class="suggestion" type="button" data-prompt="遇到滑块、验证码、短信或微信扫码时该怎么做？">遇到验证怎么办？</button>
+          </div>
+          {% endif %}
+        </div>
+        <div class="composer-wrap">
+          {% if not model_enabled %}
+          <details class="setup-note">
+            <summary>连接自建模型</summary>
+            <p>在 QD 服务中配置 <code>AI_BASE_URL</code>、<code>AI_MODEL</code> 和 <code>AI_API_KEY</code>。</p>
+            <p>无密钥的本地服务可启用 <code>AI_ALLOW_NO_KEY=true</code>。</p>
+          </details>
+          {% endif %}
+          <form class="composer" id="chat-form">
+            <label class="sr-only" for="chat-input">发送消息或粘贴网站网址</label>
+            <textarea id="chat-input" rows="2" placeholder="发送消息，或粘贴网站网址…" maxlength="2000" required></textarea>
+            <div class="composer-foot">
+              <span class="privacy-note"><i class="fa fa-shield-alt" aria-hidden="true"></i> 登录信息请在浏览器输入</span>
+              <button class="primary send" id="chat-send" type="submit" aria-label="发送" title="发送"><i class="fa fa-arrow-up" aria-hidden="true"></i></button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="panel browser-panel" id="browser-panel" aria-label="在线浏览器">
+        <header class="panel-head">
+          <span class="panel-icon browser-icon"><i class="fas fa-globe" aria-hidden="true"></i></span>
+          <div class="panel-title"><h2>在线浏览器</h2><p id="browser-status" role="status">{% if browser_ready %}等待打开网站{% else %}浏览器待配置{% endif %}</p></div>
+          <button class="icon-button" id="browser-expand" type="button" aria-label="放大浏览器" title="放大浏览器" hidden><i class="fa fa-expand" aria-hidden="true"></i></button>
+          <button class="icon-button" id="browser-close" type="button" aria-label="关闭浏览器" title="关闭浏览器" hidden><i class="fa fa-times" aria-hidden="true"></i></button>
+        </header>
+        {% if not taskid %}
+        <form class="address-bar" id="address-form">
+          <button class="icon-button" id="browser-back" type="button" title="返回上一页" aria-label="返回上一页" disabled><i class="fa fa-arrow-left" aria-hidden="true"></i></button>
+          <button class="icon-button" id="browser-refresh" type="button" title="刷新网页" aria-label="刷新网页" disabled><i class="fa fa-redo" aria-hidden="true"></i></button>
+          <label class="sr-only" for="site-input">网站网址</label>
+          <div class="address-input"><i class="fa fa-link" aria-hidden="true"></i><input id="site-input" type="text" inputmode="url" maxlength="4096" placeholder="https://example.com" spellcheck="false" autocapitalize="off" autocomplete="off" required></div>
+          <button class="button" type="submit" id="site-open" {% if not browser_ready %}disabled{% endif %}>打开</button>
+        </form>
+        {% else %}
+        <div class="address-bar recovery-bar"><span>{{ task_name }}</span><button class="primary" type="button" id="recovery-open" {% if not browser_ready %}disabled{% endif %}>打开验证页面</button></div>
+        {% endif %}
+
+        <div class="browser-content">
+          <div class="browser-empty" id="browser-empty">
+            <span class="empty-icon"><i class="fa fa-window-maximize" aria-hidden="true"></i></span>
+            <h3>{% if taskid %}在同一浏览器完成重新验证{% else %}打开需要签到的网站{% endif %}</h3>
+            <p>在网页内完成滑块、图形验证码、短信或微信扫码。</p>
+            {% if not browser_ready %}
+            <details class="setup-note">
+              <summary>启用在线浏览器</summary>
+              <p>在 QD 服务配置 <code>AI_WORKBENCH_BROWSER=true</code> 和独立的 <code>COOKIE_SECRET</code>、<code>AES_KEY</code>，安装 Chromium，并使用单进程模式。</p>
+            </details>
+            {% endif %}
+          </div>
+          <div class="browser-live" id="browser-live" hidden>
+            <div class="tabs" id="browser-tabs" aria-label="浏览器标签页"></div>
+            <div class="browser-screen" id="browser-screen" tabindex="0" aria-label="远程网页。点击或拖动操作，支持键盘输入。">
+              <img id="browser-frame" alt="当前网站页面" width="1100" height="740" draggable="false">
+            </div>
+            <form class="type-form" id="type-form" hidden>
+              <label for="type-input">发送文本到当前网页输入框</label>
+              <input id="type-input" type="password" maxlength="1024" autocomplete="off" enterkeyhint="send">
+              <button class="button" type="submit">输入</button>
+            </form>
+          </div>
+          <p class="browser-error" id="browser-error" role="alert" hidden></p>
+        </div>
+
+        <footer class="browser-actions" id="browser-actions" hidden>
+          <button class="button" id="keyboard-toggle" type="button" aria-controls="type-form" aria-expanded="false"><i class="far fa-keyboard" aria-hidden="true"></i> 键盘</button>
+          {% if taskid %}
+          <button class="primary" id="resume-task" type="button">验证完成，恢复任务</button>
+          {% else %}
+          <button class="button" id="record-manual" type="button">手动录制</button>
+          <button class="primary" id="record-auto" type="button">已登录，录制签到</button>
+          <button class="primary" id="record-finish" type="button" hidden>结束录制并分析</button>
+          <button class="button" id="record-cancel" type="button" hidden>取消录制</button>
+          <button class="button" id="record-retry" type="button" hidden>重新分析</button>
+          {% endif %}
+        </footer>
+      </section>
+    </main>
+
+    <template id="draft-template">
+      <section class="draft-card">
+        <div class="draft-head"><span class="panel-icon"><i class="fa fa-code" aria-hidden="true"></i></span><div><h3>签到脚本草稿</h3><p class="draft-site"></p></div></div>
+        <p class="draft-stats"></p>
+        <p class="draft-result"></p>
+        <form class="schedule-form">
+          <label>任务名称<input name="name" maxlength="100" required></label>
+          <label>每日执行 <small>服务器时间</small><input name="clock" type="time" value="08:00" required></label>
+          <button class="primary" type="submit">保存并定时</button>
+        </form>
+      </section>
+    </template>
+  </div>
+</body>
+</html>

@@ -9,10 +9,13 @@ import time
 
 from tornado.web import addslash, authenticated
 
+from db.task import Task
 from web.handlers.base import BaseHandler
 
 
 def my_status(task):
+    if task.get('browser_state') == Task.BROWSER_VERIFY:
+        return u'待重新验证'
     if task['disabled']:
         return u'停止'
     if task['last_failed_count']:
@@ -37,7 +40,7 @@ class MyHandler(BaseHandler):
 
             tpls = await self.db.tpl.list(userid=user['id'], fields=('id', 'siteurl', 'sitename', 'banner', 'note', 'disabled', 'lock', 'last_success', 'ctime', 'mtime', 'fork', '_groups', 'updateable', 'tplurl'), limit=None)
 
-            tasks = await self.db.task.list(user['id'], fields=('id', 'tplid', 'note', 'disabled', 'last_success', 'success_count', 'failed_count', 'last_failed', 'next', 'last_failed_count', 'ctime', '_groups'), limit=None)
+            tasks = await self.db.task.list(user['id'], fields=('id', 'tplid', 'note', 'disabled', 'last_success', 'success_count', 'failed_count', 'last_failed', 'next', 'last_failed_count', 'ctime', '_groups', 'browser_state'), limit=None)
             for task in tasks:
                 tpl = await self.db.tpl.get(task['tplid'], fields=('id', 'userid', 'sitename', 'siteurl', 'banner', 'note'))
                 task['tpl'] = tpl
@@ -56,7 +59,7 @@ class MyHandler(BaseHandler):
                 if (temp not in tplgroups):
                     tplgroups.append(temp)
 
-            await self.render('my.html', tpls=tpls, tasks=tasks, my_status=my_status, userid=user['id'], taskgroups=_groups, tplgroups=tplgroups, adminflg=adminflg)
+            await self.render('my.html', tpls=tpls, tasks=tasks, my_status=my_status, userid=user['id'], taskgroups=_groups, tplgroups=tplgroups, adminflg=adminflg, browser_verify=Task.BROWSER_VERIFY, browser_group=Task.BROWSER_GROUP)
         else:
             return self.redirect('/login')
 
