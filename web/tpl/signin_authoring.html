@@ -1,0 +1,61 @@
+{% extends "signin_shell.html" %}
+
+{% block page_title %}AI 签到工作台{% endblock %}
+{% block page_assets %}
+  <link rel="stylesheet" href="{{ static_url('css/signin_authoring.css') }}">
+  <script defer src="{{ static_url('components/signin_authoring.js') }}"></script>
+{% endblock %}
+{% block page_header %}{{ signin.header(self.page_title(), 'author') }}{% endblock %}
+{% block main_class %}author-grid{% endblock %}
+{% block main %}
+      <section class="panel qd-panel">
+        <h2 id="author-heading">新建签到模板</h2>
+        <p>上传一次成功签到的网络记录。AI 会挑出相关请求，整理响应判定，并连接抓包中能确认的业务参数。</p>
+        <form id="author-form" method="post" aria-labelledby="author-heading" data-owner="{{ owner }}" data-limit="{{ max_upload }}">
+          <div class="author-field">
+            <label for="author-site">签到网站</label>
+            <input id="author-site" name="site" type="url" placeholder="https://example.com" maxlength="4096" required>
+          </div>
+          <div class="author-field">
+            <label for="author-file">签到记录（HAR）</label>
+            <input id="author-file" name="har" type="file" accept=".har,.json,application/json" aria-describedby="author-file-help" required>
+            <small id="author-file-help">选择已清理敏感数据的 HAR，最大 {{ max_upload // (1024 * 1024) }} MB。</small>
+          </div>
+          <button class="primary" type="submit" {% if not model_enabled %}disabled{% endif %}>分析记录</button>
+          {% if not model_enabled %}<p>模型未配置，请联系 QD 管理员。</p>{% endif %}
+        </form>
+        <div id="author-status" class="author-status" role="status"></div>
+        <div id="author-error" class="author-error" role="alert"></div>
+        <noscript><p>分析记录需要启用 JavaScript。</p></noscript>
+      </section>
+      <aside class="panel qd-panel author-guide" aria-labelledby="author-guide-heading">
+        <h2 id="author-guide-heading">怎样录一份签到记录</h2>
+        <ol>
+          <li>用自己的浏览器打开站点，先正常登录。</li>
+          <li>打开开发者工具的「网络」面板，清空之前的请求。</li>
+          <li>点一次站点签到。看到签到结果后，导出不含敏感数据的 HAR。</li>
+        </ol>
+        <p>QD 只把从记录中提取的请求和结果摘要交给模型。草稿需要你审核，涉及账号的参数在编辑器里单独填写。</p>
+        <p class="author-model">{{ model if model_enabled else '模型待配置' }}</p>
+        {% if browser_ready %}<a href="/ai-workbench/?mode=browser">使用 QD 在线录制</a>{% endif %}
+      </aside>
+      <section class="panel qd-panel author-draft" aria-labelledby="author-draft-title" id="author-draft" hidden>
+        <div class="qd-panel-head">
+          <div>
+            <h2 id="author-draft-title" tabindex="-1">签到模板草稿</h2>
+            <p id="author-summary"></p>
+          </div>
+          <span class="author-badge">待试跑</span>
+        </div>
+        <ul id="author-warnings" class="author-warnings" hidden></ul>
+        <ol id="author-steps" class="author-steps"></ol>
+        <details>
+          <summary>查看模板 JSON</summary>
+          <pre id="author-json"></pre>
+        </details>
+        <div class="qd-actions author-actions">
+          <button type="button" class="primary" id="author-edit">编辑和试跑</button>
+          <button type="button" class="button" id="author-download">下载草稿</button>
+        </div>
+      </section>
+{% endblock %}

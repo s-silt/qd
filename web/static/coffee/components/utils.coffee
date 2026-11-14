@@ -194,6 +194,7 @@ define (require) ->
             success_asserts: en.rule?.success_asserts
             failed_asserts: en.rule?.failed_asserts
             extract_variables: en.rule?.extract_variables
+            signin_receipt: en.rule?.signin_receipt
           } for en in tpl)
           pages: []
           version: '1.2'

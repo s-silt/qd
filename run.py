@@ -74,7 +74,7 @@ async def _init_database(logger):
     from sqlalchemy.exc import InterfaceError, OperationalError
 
     database = DB()
-    converter = db_converter.DBconverter(database)
+    converter = db_converter.DBconverter()
     max_retry = config.db_connect_max_retry
     interval = config.db_connect_retry_interval
     attempt = 0

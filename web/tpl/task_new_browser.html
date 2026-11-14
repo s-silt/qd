@@ -1,0 +1,14 @@
+<div class="modal-header">
+  <button class="close" type="button" data-dismiss="modal" aria-label="关闭">&times;</button>
+  <h2 class="modal-title h4">新建任务</h2>
+</div>
+<div class="modal-body">
+  {% if tpl %}
+  <p>使用「{{ tpl.sitename }}」的签到脚本。在工作台登录站点后，可立即签到或设置定时。</p>
+  <a class="btn btn-primary" href="/ai-workbench/?template={{ tpl.id }}">登录站点并创建任务</a>
+  {% else %}
+  <p>可以输入网站网址录制新的签到脚本，也可以先创建 HAR 模板。</p>
+  <a class="btn btn-primary" href="/ai-workbench/">用 AI 编写签到模板</a>
+  <a class="btn btn-default" href="/har/edit">创建 HAR 模板</a>
+  {% endif %}
+</div>

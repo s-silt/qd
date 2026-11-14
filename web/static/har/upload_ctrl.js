@@ -250,6 +250,31 @@
         };
         return reader.readAsText($scope.file);
       };
+      var workbench = document.querySelector('[data-workbench-owner]');
+      if (workbench) {
+        try {
+          var savedDraft = sessionStorage.getItem('qd-authoring-draft');
+          sessionStorage.removeItem('qd-authoring-draft');
+          var draft = JSON.parse(savedDraft);
+          if (draft && draft.owner === workbench.dataset.workbenchOwner &&
+              Array.isArray(draft.steps) && draft.steps.length) {
+            var loadedHar = utils.tpl2har(draft.steps);
+            var env = {};
+            for (const name of analysis.find_variables(loadedHar)) env[name] = '';
+            var site = new URL(draft.site);
+            return $scope.loaded({
+              filename: site.hostname,
+              har: loadedHar,
+              env: env,
+              setting: { sitename: site.hostname, siteurl: site.origin },
+              workbenchDraft: true,
+              upload: true
+            });
+          }
+        } catch (_) {
+          $scope.alert('无法读取工作台草稿，请重新打开或上传下载的草稿。');
+        }
+      }
       if (HARDATA !== "") {
         // 公共模板订阅: HARDATA 是 pubtpl.content (base64 QD 数组)
         element.find('button').button('loading');

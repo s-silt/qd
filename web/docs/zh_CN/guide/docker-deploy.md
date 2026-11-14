@@ -1,6 +1,6 @@
 # Docker 部署教程（s-silt/qd fork）
 
-> 本教程介绍如何使用 [s-silt/qd](https://github.com/s-silt/qd) 这个 fork 仓库部署 QD 框架。fork 包含 **AI 智能识别签到**、**内置 Playwright 自动抓包**、**验证码 OCR**、worker N+1 优化等新增功能。
+> 本教程介绍如何使用 [s-silt/qd](https://github.com/s-silt/qd) 部署 QD 框架，包括 AI 签到工作台、在线浏览器和定时任务。
 >
 > 拿到 fork 镜像有两种方式：
 > - **方式 A（推荐，免构建）**：直接用 CI 自动发布的预构建镜像 [`ghcr.io/s-silt/qd:latest`](https://github.com/s-silt/qd/pkgs/container/qd)。每次推送到 `master` 都会自动重新构建发布，含 fork 全部修改、Playwright + Chromium、OCR（amd64 / arm64）。
@@ -233,21 +233,22 @@ environment:
 
 详细操作流程见 [AI 转换签到模板教程](./ai-sign-template.md)。
 
-### 启用 Playwright 自动抓包
+### 启用工作台在线录制
 
-Playwright 已集成到 QD 主程序中，**无需额外部署 sidecar 容器**。构建镜像时已自动安装 Playwright + Chromium。
+使用带 Playwright 和 Chromium 的镜像，启用单进程 Web 服务，并设置独立的 COOKIE_SECRET 和 AES_KEY。升级已有实例时保留现有密钥。
 
 如需调整 Playwright 参数，添加以下环境变量：
 
 ```yaml
 environment:
+  - AI_WORKBENCH_BROWSER=true
   - PLAYWRIGHT_HEADLESS=true              # 无头模式，默认 true
   - PLAYWRIGHT_MAX_CONCURRENT=2           # 最大并发抓包数
   - PLAYWRIGHT_DEFAULT_TIMEOUT_MS=60000   # 单次抓包超时（毫秒）
   - PLAYWRIGHT_ALLOW_HOSTS=               # 域名白名单，逗号分隔
 ```
 
-详细操作流程见 [URL 自动抓包教程](./auto-capture.md)。
+详细操作流程见 [在线录制](./auto-capture.md)。
 
 ### Nginx 反向代理 + HTTPS
 
@@ -301,8 +302,7 @@ environment:
 
 | 改动 | 是否影响老模板 | 说明 |
 | --- | --- | --- |
-| 新增 AI 识别按钮 + `/har/ai_analyze` 端点 | 否 | 纯新增功能，不点不影响任何旧逻辑 |
-| 内置 Playwright 自动抓包 | 否 | 纯新增功能，不影响已有模板 |
+| 集中 AI 签到入口 | 否 | 新模板从 AI 签到工作台生成，已有模板继续使用 QD 执行引擎 |
 | Cookie 获取页面 `/get_cookies` | 否 | 纯新增功能 |
 | `worker.push_batch` N+1 重构 | 否 | 只优化查询次数，推送内容、判定逻辑、调度规则一字未改 |
 | `worker.clear_log` 改批量删除 | 否 | 一次性删过期日志 vs 逐条删，结果一致 |
@@ -432,7 +432,7 @@ FROM qdtoday/qd:lite-latest
 
 精简版去掉了 ddddocr / opencv 等依赖，镜像体积小一半，但不能用 OCR 验证码识别功能。
 
-### Q7：Playwright 自动抓包报错 / Chromium 崩溃
+### Q7：在线录制报错 / Chromium 崩溃
 
 1. 确保 `docker-compose.yml` 中设置了 `shm_size: 1gb`（Chromium 需要较大共享内存）
 2. 检查日志：`docker compose logs qd | grep -i playwright`
@@ -441,7 +441,7 @@ FROM qdtoday/qd:lite-latest
 ### Q8：AI 功能不工作
 
 1. 检查 `AI_API_KEY` 是否正确设置
-2. 测试 API 连通性：`curl http://your-qd-host:8923/har/ai_status`
+2. 登录 QD，打开「AI 签到工作台」，用一次已清理敏感数据的签到 HAR 测试分析
 3. 检查日志中的 AI 调用错误信息
 4. 尝试更换 `AI_BASE_URL` 和 `AI_MODEL`
 
@@ -450,7 +450,7 @@ FROM qdtoday/qd:lite-latest
 ## 七、相关文档
 
 - [HAR 抓包教程](./har-capture.md)
-- [AI 智能识别签到模板](./ai-sign-template.md)
-- [URL 自动抓包](./auto-capture.md)
+- [AI 签到工作台](./ai-sign-template.md)
+- [在线录制](./auto-capture.md)
 - [使用指南](./how-to-use.md)
 - [常见问题](./faq.md)

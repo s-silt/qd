@@ -1,0 +1,9 @@
+<div class="modal-header">
+  <button class="close" type="button" data-dismiss="modal" aria-label="关闭">&times;</button>
+  <h2 class="modal-title h4">{{ title }}</h2>
+</div>
+<div class="modal-body">
+  {% if log %}<p>{{ log }}</p>{% endif %}
+  {% if verify %}<a class="btn btn-primary" href="/ai-workbench/?task={{ taskid }}">重新验证</a>{% endif %}
+  <a class="btn btn-default" href="/task/{{ taskid }}/log">查看执行日志</a>
+</div>

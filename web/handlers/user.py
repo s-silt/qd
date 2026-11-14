@@ -23,6 +23,7 @@ import config
 from db.task import Task
 from libs import mcrypto as crypto
 from libs.funcs import Pusher
+from libs.signin_workbench import validate_script
 from web.handlers.base import BaseHandler, logger_web_handler
 
 try:
@@ -504,11 +505,11 @@ class UserDBHandler(BaseHandler):
 
                     if 'backuptplsbtn' in envs:
                         tpls = []
-                        for tpl in await self.db.tpl.list(userid=userid, fields=('id', 'siteurl', 'sitename', 'banner', 'note', 'fork', '_groups', 'har', 'tpl', 'variables', 'init_env', 'lock'), limit=None, sql_session=sql_session):
+                        for tpl in await self.db.tpl.list(userid=userid, fields=('id', 'siteurl', 'sitename', 'banner', 'note', 'fork', '_groups', 'har', 'tpl', 'variables', 'init_env', 'lock', 'browser'), limit=None, sql_session=sql_session):
                             if tpl.pop('lock') and tpl['_groups'] == Task.BROWSER_GROUP:
                                 continue
                             tpl['tpl'] = await self.db.user.decrypt(userid, tpl['tpl'], sql_session=sql_session)
-                            tpl['har'] = await self.db.user.decrypt(userid, tpl['har'], sql_session=sql_session)
+                            tpl['har'] = await self.db.user.decrypt(userid, tpl['har'], sql_session=sql_session) if tpl['har'] else None
                             tpls.append(tpl)
 
                         tasks = []
@@ -579,14 +580,19 @@ class UserDBHandler(BaseHandler):
                                 except Exception as e:
                                     raise Exception("抱歉，暂不支持通过本页面还原该备份文件！(ノ￣▽￣) \\r\\n \
                                     请确认该文件来自于该页面\"备份\"按钮 (๑*◡*๑)。") from e
-                            # ids = []
+                            browser_templates = set()
                             for newtpl in tpls:
                                 userid2 = int(userid)
-                                har = await self.db.user.encrypt(userid2, newtpl['har'], sql_session=sql_session)
+                                browser = newtpl.get('browser') is True or newtpl.get('browser') == 1
+                                if browser:
+                                    validate_script(newtpl['tpl'])
+                                har = await self.db.user.encrypt(userid2, newtpl['har'], sql_session=sql_session) if not browser else None
                                 tpl = await self.db.user.encrypt(userid2, newtpl['tpl'], sql_session=sql_session)
                                 variables = newtpl['variables']
                                 init_env = newtpl.get('init_env', "{}")
-                                newid = await self.db.tpl.add(userid2, har, tpl, variables, init_env=init_env, sql_session=sql_session)
+                                newid = await self.db.tpl.add(userid2, har, tpl, variables, init_env=init_env, sql_session=sql_session, browser=browser)
+                                if browser:
+                                    browser_templates.add(newid)
                                 await self.db.tpl.mod(newid, fork=newtpl['fork'],
                                                       siteurl=newtpl['siteurl'],
                                                       sitename=newtpl['sitename'],
@@ -600,6 +606,8 @@ class UserDBHandler(BaseHandler):
                                         task['tplid'] = newid
 
                             for newtask in tasks:
+                                if newtask['tplid'] in browser_templates:
+                                    continue
                                 userid2 = int(userid)
                                 newtask['init_env'] = await self.db.user.encrypt(userid2, newtask['init_env'], sql_session=sql_session)
                                 newtask['env'] = await self.db.user.encrypt(userid2, newtask['env'], sql_session=sql_session)

@@ -2,6 +2,7 @@
 <form method="POST" action="/task/{{ '%s/edit' % task.id if task else 'new' }}">
   <h2 class="text-center">{{task_title|default("新建任务")}}</h2>
   <hr>
+  {% if not task and current_user %}<p><a href="/ai-workbench/">模板里没有这个网站？用 AI 编写签到模板</a></p>{% endif %}
   {% if task.disabled %}
   <p class="alert alert-danger">任务处于禁用状态，使用 <a data-load-method="POST" class="modal_load alert-link" href="/task/{{ task.id }}/run">立即执行</a> 成功运行一次，即可解除。</p>
   {% endif %}

@@ -1,7 +1,6 @@
-"""QD chat and human-assisted sign-in recording."""
+"""QD chat and human-assisted sign-in recording HTTP handlers."""
 
 import asyncio
-import hashlib
 import json
 import re
 from contextlib import suppress
@@ -10,42 +9,25 @@ from functools import wraps
 import tornado.web
 from tornado.iostream import StreamClosedError
 
-import config
 from db.task import Task
-from libs import ai_client, playwright_capture
-from libs.funcs import Cal
+from libs import ai_client
+from libs.signin_authoring import author_template
+from libs.signin_recording import chat_reply, record_workflow
+from libs.signin_sessions import admit_session, get_owned_session, touch_session
+from libs.signin_tasks import load_workbench_target, resume_verified_task, save_template_and_task
 from libs.signin_workbench import (
-    BrowserSession,
     VerificationNeeded,
     WorkbenchError,
-    clean_chat,
-    credentials_in_chat,
+    WorkbenchPermissionError,
+    browser_enabled,
     page_label,
+    replay,
     web_origin,
 )
 from web.handlers.base import BaseHandler, logger_web_handler
 
-CHAT_CONTEXT = (
-    "你是 QD 签到助手。用用户的语言简洁回答，解释如何在浏览器中完成登录和验证、录制签到及定时。"
-    "用户亲自完成站点要求的验证。不要询问密码、验证码、Cookie 或令牌。"
-    "你无法打开网站、执行代码、操作浏览器或修改任务。"
-)
-EXAMPLE_KEYS = {
-    hashlib.sha256(value).digest() for value in (b"binux", b"please-change-to-a-long-random-string")
-}
 
-
-def browser_enabled():
-    return (
-        config.ai_workbench_browser
-        and not config.multiprocess
-        and playwright_capture.is_available()
-        and config.cookie_secret not in EXAMPLE_KEYS
-        and config.aes_key not in EXAMPLE_KEYS
-    )
-
-
-def workbench_post(method):
+def workbench_post(method, *, body_limit=32000):
     @wraps(method)
     @tornado.web.authenticated
     async def handler(self, *args):
@@ -54,15 +36,21 @@ def workbench_post(method):
             "application/json"
         ) or not self.request.headers.get("X-QD-Workbench"):
             raise tornado.web.HTTPError(403)
-        if len(self.request.body) > 32000:
+        if len(self.request.body) > body_limit:
             raise tornado.web.HTTPError(413)
         try:
-            payload = json.loads(self.request.body)
+            body = self.request.body
+            if len(body) > 32000:
+                payload = await asyncio.to_thread(json.loads, body)
+            else:
+                payload = json.loads(body)
             if not isinstance(payload, dict):
                 raise ValueError("请求格式无效")
             await method(self, payload, *args)
         except tornado.web.HTTPError:
             raise
+        except WorkbenchPermissionError as exc:
+            raise tornado.web.HTTPError(exc.status_code) from None
         except StreamClosedError:
             return
         except VerificationNeeded as exc:
@@ -90,6 +78,17 @@ def workbench_post(method):
     return handler
 
 
+AUTHORING_BODY_LIMIT = 5 * 1024 * 1024
+
+
+class WorkbenchAuthor(BaseHandler):
+    async def analyze(self, payload):
+        draft = await author_template(payload.get("har"), payload.get("site"), ai_client.AIClient())
+        await self.finish(draft)
+
+    post = workbench_post(analyze, body_limit=AUTHORING_BODY_LIMIT)
+
+
 class WorkbenchPage(BaseHandler):
     @tornado.web.authenticated
     async def get(self):
@@ -102,7 +101,11 @@ class WorkbenchPage(BaseHandler):
         )
         client = ai_client.AIClient()
         taskid = self.get_query_argument("task", "")
+        templateid = self.get_query_argument("template", "")
         task_name = ""
+        script_name = ""
+        if taskid and templateid:
+            raise tornado.web.HTTPError(400)
         if taskid:
             if not re.fullmatch(r"[0-9]{1,10}", taskid):
                 raise tornado.web.HTTPError(400)
@@ -113,37 +116,36 @@ class WorkbenchPage(BaseHandler):
                 raise tornado.web.HTTPError(404)
             tpl = await self.db.tpl.get(task["tplid"], fields=("sitename",))
             task_name = task["note"] or (tpl or {}).get("sitename") or "签到任务"
+        if templateid:
+            if not re.fullmatch(r"[0-9]{1,10}", templateid):
+                raise tornado.web.HTTPError(400)
+            tpl = self.check_permission(
+                await self.db.tpl.get(templateid, fields=("id", "userid", "browser", "sitename")), "w"
+            )
+            if not tpl["browser"]:
+                raise tornado.web.HTTPError(404)
+            script_name = tpl["sitename"] or "浏览器模板"
         await self.render(
-            "ai_workbench.html",
+            "ai_workbench.html" if taskid or templateid or self.get_argument("mode", "") == "browser"
+            else "signin_authoring.html",
             model=client.model,
+            owner=self.current_user["id"],
+            max_upload=AUTHORING_BODY_LIMIT,
             model_enabled=client.enabled,
             browser_ready=browser_enabled(),
             taskid=taskid,
             task_name=task_name,
+            templateid=templateid,
+            script_name=script_name,
         )
 
 
 class WorkbenchChat(BaseHandler):
     @workbench_post
     async def post(self, payload):
-        history = payload.get("messages", [])
-        if not isinstance(history, list) or not 1 <= len(history) <= 12:
-            raise ValueError()
-        messages = [{"role": "system", "content": CHAT_CONTEXT}]
-        for item in history:
-            if not isinstance(item, dict) or item.get("role") not in ("assistant", "user"):
-                raise ValueError()
-            text = item.get("content")
-            if not isinstance(text, str) or not text.strip() or len(text) > 2000:
-                raise ValueError()
-            if item["role"] == "user" and credentials_in_chat(text):
-                raise WorkbenchError("检测到凭据或验证码，消息已拦截。请在浏览器页面中输入验证信息")
-            messages.append({"role": item["role"], "content": clean_chat(text)})
-        if messages[-1]["role"] != "user":
-            raise ValueError()
         self.evil(+1)
-        reply = await ai_client.AIClient().chat(messages)
-        await self.finish({"text": clean_chat(reply)[:1800]})
+        reply = await chat_reply(payload.get("messages", []), ai_client.AIClient())
+        await self.finish({"text": reply})
 
 
 class WorkbenchStart(BaseHandler):
@@ -153,105 +155,34 @@ class WorkbenchStart(BaseHandler):
             raise WorkbenchError(
                 "在线浏览器需要启用 AI_WORKBENCH_BROWSER、安装 Chromium、使用单进程和独立部署密钥"
             )
-        sessions = self.application.workbench_sessions
         owner = self.current_user["id"]
         taskid = payload.get("task")
-        state = None
-        if taskid is not None:
-            if type(taskid) is not int or taskid <= 0:
-                raise ValueError()
-            task = self.check_permission(
-                await self.db.task.get(
-                    taskid,
-                    fields=("id", "userid", "browser_state", "init_env", "browser_session"),
-                ),
-                "w",
-            )
-            if not task["browser_state"]:
-                raise WorkbenchError("此任务未使用浏览器登录状态")
-            values = await self.db.user.decrypt(owner, task["init_env"])
-            url = values["_qd_browser"]["url"]
-            if task["browser_session"]:
-                state = await self.db.user.decrypt(owner, task["browser_session"])
-        else:
-            url = payload.get("url")
-        web_origin(url)
-        for existing in sessions.values():
-            if (
-                existing.owner == owner
-                and existing.taskid == taskid
-                and existing.start_url == url
-                and existing.page
-            ):
-                touch_session(sessions, existing)
-                await self.finish({"session": existing.id, "site": page_label(existing.page.url)})
-                return
-        session = BrowserSession(owner, url, taskid=taskid)
-        # Recheck after the DB awaits before reserving a browser slot.
-        if len(sessions) >= max(1, playwright_capture.PLAYWRIGHT_MAX_CONCURRENT) or any(
-            existing.owner == owner for existing in sessions.values()
-        ):
-            raise WorkbenchError("当前没有可用的浏览器会话，请稍后重试")
-        sessions[session.id] = session
-        async with session.lock:
-            try:
-                await session.open(state)
-            except BaseException:
-                sessions.pop(session.id, None)
-                await session.close()
-                raise
-        touch_session(sessions, session)
+        templateid = payload.get("template")
+        target = await load_workbench_target(
+            self.db,
+            owner,
+            taskid=taskid,
+            templateid=templateid,
+        )
+        url = target["url"] if (taskid is not None or templateid is not None) else payload.get("url")
+        session = await admit_session(
+            self.application.workbench_sessions,
+            owner,
+            url=url,
+            taskid=taskid,
+            templateid=templateid,
+            state=target["state"],
+            script=target["script"],
+        )
         await self.finish({"session": session.id, "site": page_label(session.page.url)})
-
-
-def touch_session(sessions, session):
-    async def expire():
-        async with session.lock:
-            if sessions.pop(session.id, None) is not None:
-                await session.close()
-
-    session.touch(lambda: asyncio.create_task(expire()))
-
-
-async def analyze_recording(recording, client):
-    if not client.enabled:
-        raise WorkbenchError("请先配置自建模型服务，再分析录制结果")
-    if not recording.summaries:
-        raise WorkbenchError("没有录到同站点签到请求，请重新录制")
-    # No URL host, headers, bodies, screenshots, selectors or verification data
-    # cross the model boundary. The model describes the locally recorded script.
-    summary = dict(
-        requests=recording.summaries, clicks=len(recording.steps), site_reported_success=recording.success
-    )
-    reply = await client.chat(
-        [
-            {
-                "role": "system",
-                "content": (
-                    "分析这组已脱敏的 QD 签到请求摘要。用简短中文说明观察到的步骤及能否确认结果。"
-                    "只依据记录内容，不要猜测、生成可执行指令或声称未观察到的结果。"
-                ),
-            },
-            {"role": "user", "content": json.dumps(summary, ensure_ascii=False)},
-        ],
-        temperature=0.1,
-    )
-    if not isinstance(reply, str) or not reply.strip():
-        raise WorkbenchError("模型返回空结果，可重新分析")
-    return {
-        "summary": clean_chat(reply)[:1600],
-        "steps": len(recording.steps),
-        "requests": len(recording.summaries),
-        "blocked": recording.blocked,
-        "verified": recording.success,
-        "site": page_label(recording.start_url),
-    }
 
 
 class WorkbenchSessionHandler(BaseHandler):
     def _session(self, sessionid):
-        session = self.application.workbench_sessions.get(sessionid)
-        if session is None or session.owner != self.current_user["id"]:
+        session = get_owned_session(
+            self.application.workbench_sessions, sessionid, self.current_user["id"]
+        )
+        if session is None:
             raise tornado.web.HTTPError(404)
         return session
 
@@ -259,6 +190,11 @@ class WorkbenchSessionHandler(BaseHandler):
     async def get(self, sessionid, action):
         session = self._session(sessionid)
         self.set_header("Cache-Control", "no-store")
+        if action == "draft":
+            await self.finish(
+                {"draft": session.draft, "template": session.saved, "task": session.created_task}
+            )
+            return
         if action == "frame":
             if session.lock.locked():
                 self.set_status(204)
@@ -266,24 +202,20 @@ class WorkbenchSessionHandler(BaseHandler):
                 return
             async with session.lock:
                 try:
-                    page = session.active_page()
-                    frame = await page.screenshot(type="jpeg", quality=65, timeout=1800)
+                    info = await session.capture_frame()
                 except Exception:
                     self.set_status(204)
                     with suppress(StreamClosedError):
                         await self.finish()
                     return
-                site = page_label(page.url)
-                self.set_header("X-QD-Site", site if "://" in site else "")
-                self.set_header("X-QD-Recording", "1" if session.recording else "0")
-                self.set_header(
-                    "X-QD-Tabs",
-                    json.dumps([page_label(tab.url) for tab in session.context.pages], ensure_ascii=True),
-                )
-                self.set_header("X-QD-Active-Tab", str(session.context.pages.index(page)))
+                self.set_header("X-QD-Site", info["site"])
+                self.set_header("X-QD-Recording", info["recording"])
+                self.set_header("X-QD-Verification", info["verification"])
+                self.set_header("X-QD-Tabs", info["tabs"])
+                self.set_header("X-QD-Active-Tab", info["active_tab"])
                 self.set_header("Content-Type", "image/jpeg")
                 with suppress(StreamClosedError):
-                    await self.finish(frame)
+                    await self.finish(info["frame"])
             return
         raise tornado.web.HTTPError(404)
 
@@ -304,138 +236,54 @@ class WorkbenchSessionHandler(BaseHandler):
             elif action == "input":
                 await self.finish(await session.input(payload) or {"ok": True})
             elif action == "navigate":
-                await session.goto(payload.get("url"))
+                if session.taskid is not None or session.templateid is not None:
+                    raise WorkbenchError("此会话关联了现有模板或任务")
+                url = payload.get("url")
+                if web_origin(url) != web_origin(session.start_url):
+                    raise WorkbenchError("如需切换站点，请先关闭当前浏览器")
+                await session.goto(url)
+                session.start_url = url
+                session.draft = session.captured = session.saved = session.created_task = None
                 await self.finish({"ok": True})
             elif action == "record":
-                await self.record(session, payload)
+                await self.finish(await record_workflow(session, payload.get("mode"), ai_client.AIClient()))
             elif action == "save":
                 await self.save(session, payload)
+            elif action == "test":
+                await self.test_script(session)
             elif action == "resume":
-                await self.resume(session)
+                await self.finish(await resume_verified_task(self.db, session))
             else:
                 raise tornado.web.HTTPError(404)
 
-    async def record(self, session, payload):
-        if session.taskid is not None:
-            raise WorkbenchError("请在完成站点验证后恢复原任务")
-        mode = payload.get("mode")
-        if mode == "cancel":
-            session.recording = None
-            await self.finish({"ok": True})
-            return
-        if mode in ("auto", "manual"):
-            if not ai_client.AIClient().enabled:
-                raise WorkbenchError("请先配置自建模型服务")
-            await session.begin()
-            if mode == "manual" or not await session.auto_click():
-                await self.finish({"manual": True})
-                return
-            await session.finish_recording()
-        elif mode == "finish":
-            if session.recording:
-                await session.finish_recording()
-        elif mode != "retry":
-            raise ValueError()
-        if not session.captured:
-            raise WorkbenchError("请先录制一次签到")
-        session.draft = await analyze_recording(session.captured, ai_client.AIClient())
-        await self.finish({"draft": session.draft})
+    async def test_script(self, session):
+        if session.taskid is not None or not (session.template_script or session.draft):
+            raise WorkbenchError("请先生成签到脚本")
+        script = session.template_script or session.draft["script"]
+        state = await session.verification_state(script["origin"])
+        if session.templateid is not None:
+            self.check_permission(await self.db.tpl.get(session.templateid, fields=("userid",)), "w")
+        message, _ = await replay(script, state)
+        await self.finish({"result": message})
 
     async def save(self, session, payload):
-        if session.taskid is not None or not session.draft or not session.captured:
-            raise WorkbenchError("请先生成签到脚本草稿")
-        if session.saved:
-            await self.finish(session.saved)
-            return
-        name = payload.get("name", "")
-        clock = payload.get("clock", "")
-        if not isinstance(name, str) or not name.strip() or len(name) > 100:
-            raise WorkbenchError("请输入 1 到 100 字符的任务名称")
-        if not isinstance(clock, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", clock):
-            raise WorkbenchError("请选择每日签到时间")
-        recording = session.captured
-        if not recording.success:
-            raise WorkbenchError("录制时未检测到站点确认签到的提示，请完成签到后重新录制")
-        state = await session.verification_state(recording.origin)
-        times = clock.split(":")
-        schedule = {"sw": True, "mode": "cron", "cron_val": f"{int(times[1])} {int(times[0])} * * *"}
-        next_at = Cal().cal_next_ts(schedule).get("ts")
-        if not next_at:
-            raise WorkbenchError("无法计算下次运行时间")
-        script = dict(origin=recording.origin, url=recording.start_url, steps=recording.steps)
-        owner = session.owner
-        async with self.db.transaction() as txn:
-            empty = await self.db.user.encrypt(owner, [], sql_session=txn)
-            tplid = await self.db.tpl.add(owner, empty, empty, "[]", "{}", sql_session=txn)
-            await self.db.tpl.mod(
-                tplid,
-                sitename=name.strip(),
-                siteurl=recording.origin,
-                note="AI 工作台录制的浏览器签到任务",
-                lock=True,
-                _groups=Task.BROWSER_GROUP,
-                sql_session=txn,
-            )
-            env = await self.db.user.encrypt(owner, {"_qd_browser": script}, sql_session=txn)
-            taskid = await self.db.task.add(tplid, owner, env, sql_session=txn)
-            encrypted = await self.db.user.encrypt(owner, state, sql_session=txn)
-            await self.db.task.mod(
-                taskid,
-                next=next_at,
-                newontime=json.dumps(schedule),
-                _groups=Task.BROWSER_GROUP,
-                browser_state=Task.BROWSER_READY,
-                browser_session=encrypted,
-                sql_session=txn,
-            )
-        session.saved = {"task": taskid, "url": f"/task/{taskid}/log"}
-        await self.finish(session.saved)
+        result, run_now = await save_template_and_task(self.db, session, payload)
+        if run_now:
+            from worker import BaseWorker
 
-    async def resume(self, session):
-        if session.taskid is None:
-            raise WorkbenchError("此会话没有关联待验证的任务")
-        if session.saved:
-            await self.finish(session.saved)
-            return
-        origin = web_origin(session.start_url)
-        state = await session.verification_state(origin)
-        async with self.db.transaction() as txn:
-            task = self.check_permission(
-                await self.db.task.get(
-                    session.taskid,
-                    fields=("id", "userid", "browser_state", "browser_session", "newontime"),
-                    sql_session=txn,
-                ),
-                "w",
+            await BaseWorker(self.db).do(
+                {"id": result["task"], "browser_state": Task.BROWSER_READY}, manual=True
             )
-            if not task["browser_state"]:
-                raise WorkbenchError("此任务未使用浏览器登录状态")
-            next_at = Cal().cal_next_ts(json.loads(task["newontime"])).get("ts")
-            if not next_at:
-                raise WorkbenchError("无法计算下次执行时间，请检查任务定时设置")
-            encrypted = await self.db.user.encrypt(session.owner, state, sql_session=txn)
-            changed = await self.db.task.mod(
-                session.taskid,
-                disabled=False,
-                next=next_at,
-                browser_state=Task.BROWSER_READY,
-                browser_session=encrypted,
-                expected={key: task[key] for key in ("browser_state", "browser_session", "newontime")},
-                last_failed_count=0,
-                sql_session=txn,
-            )
-            if not changed:
-                raise WorkbenchError("任务已更新，请刷新后查看")
-        session.saved = {"task": session.taskid, "url": f"/task/{session.taskid}/log"}
-        await self.finish(session.saved)
+        await self.finish(result)
 
 
 handlers = [
     (r"/ai-workbench/?", WorkbenchPage),
     (r"/ai-workbench/chat", WorkbenchChat),
+    (r"/ai-workbench/author", WorkbenchAuthor),
     (r"/ai-workbench/browser", WorkbenchStart),
     (
-        r"/ai-workbench/browser/([A-Za-z0-9_-]{32})/(frame|input|navigate|record|save|resume|close)",
+        r"/ai-workbench/browser/([A-Za-z0-9_-]{32})/(frame|draft|input|navigate|record|test|save|resume|close)",
         WorkbenchSessionHandler,
     ),
 ]

@@ -1,0 +1,102 @@
+html:has(.qd-tasklog) {
+  font-size: 100%;
+  background: #f3f6f7;
+}
+body:has(> .qd-tasklog) {
+  background: #f3f6f7;
+  color: #182429;
+  font-family: "Source Sans 3", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+}
+.qd-tasklog {
+  --surface: #fff;
+  --ink: #182429;
+  --line: #d7e1e4;
+  --soft: #edf4f5;
+  --accent: #175a66;
+  --accent-soft: #dfedf0;
+}
+.qd-tasklog :is(h1, h2) { margin: 0; }
+.qd-tasklog a:not(.btn, .brand) { color: var(--accent); text-decoration: underline; }
+.qd-tasklog :focus-visible, .qd-skip:focus-visible {
+  outline: 2px solid #175a66;
+  outline-offset: 2px;
+}
+.qd-skip { background: #fff; }
+.qd-tasklog .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink);
+  font-size: 1.5rem;
+  font-weight: 780;
+  letter-spacing: -.05em;
+  text-decoration: none;
+}
+.qd-tasklog .brand-dot {
+  inline-size: 6px;
+  block-size: 6px;
+  align-self: flex-end;
+  margin-block-end: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+.qd-tasklog .qd-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  box-shadow: 0 2px 4px #22203a05;
+}
+.qd-tasklog .log-filter-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .625rem;
+  margin-block: 0 .875rem;
+  padding: .625rem;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: var(--qd-control-radius);
+}
+.qd-tasklog .input-group { max-inline-size: 17rem; }
+.qd-tasklog .input-group :is(.input-group-addon, .form-control, .btn) { block-size: 2.5rem; }
+.qd-tasklog .input-group .form-control { text-align: center; }
+.qd-tasklog .qd-actions .btn, .qd-tasklog .qd-panel-head .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .25em;
+  min-block-size: 2.5rem;
+}
+.qd-tasklog .qd-actions .active { font-weight: 700; border-color: var(--accent); }
+.qd-log-table {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: 70vh;
+  border: 1px solid var(--line);
+  border-radius: var(--qd-control-radius);
+}
+.qd-log-table #log-table { min-inline-size: 35rem; margin: 0; table-layout: fixed; }
+.qd-log-table #log-table th { background: var(--soft); position: sticky; inset-block-start: 0; z-index: 2; }
+.qd-log-table #log-table th:first-child { inline-size: 10rem; }
+.qd-log-table #log-table th:nth-child(2) { inline-size: 7rem; }
+.qd-log-table #log-table :is(th, td) {
+  padding: .6rem .75rem;
+  text-align: start;
+  vertical-align: top !important;
+}
+.qd-log-table .qd-log-time { white-space: nowrap; }
+.qd-log-table .showbut { word-break: normal; overflow-wrap: anywhere; }
+.qd-log-table .showbut .hljs-button {
+  display: inline-block;
+  position: static;
+  margin-block-start: .375rem;
+  padding: .4rem .625rem;
+  min-block-size: 2.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--qd-control-radius);
+  box-shadow: none;
+}
+.qd-tasklog .qd-log-links { margin: .875rem 0 0; }
+@media (max-width: 47.5rem) {
+  .qd-tasklog .qd-actions .btn, .qd-tasklog .qd-panel-head .btn { min-block-size: 2.75rem; }
+}

@@ -280,7 +280,8 @@
                   pageref: "page_0",
                   success_asserts: (ref = en.rule) != null ? ref.success_asserts : void 0,
                   failed_asserts: (ref1 = en.rule) != null ? ref1.failed_asserts : void 0,
-                  extract_variables: (ref2 = en.rule) != null ? ref2.extract_variables : void 0
+                  extract_variables: (ref2 = en.rule) != null ? ref2.extract_variables : void 0,
+                  signin_receipt: en.rule ? en.rule.signin_receipt : void 0
                 });
               }
               return results;

@@ -51,7 +51,7 @@
         })()).length > 0) {
           $scope.filter.recommend = true;
         }
-        if (!$scope.readonly) {
+        if (!$scope.readonly && !data.workbenchDraft) {
           utils.storage.set('har_filename', $scope.filename);
           utils.storage.set('har_env', $scope.env);
           if (data.upload) {
@@ -69,7 +69,7 @@
           console.debug('local saved');
           resortEntryList();
           sortRequest($('#sortBtn')[0]);
-          return utils.storage.set('har_har', $scope.har);
+          if (!$scope.data.workbenchDraft) return utils.storage.set('har_har', $scope.har);
         }
       }), 1);
       $scope.save_change = function() {
@@ -297,7 +297,8 @@
                 rule: {
                   success_asserts: entry.success_asserts,
                   failed_asserts: entry.failed_asserts,
-                  extract_variables: entry.extract_variables
+                  extract_variables: entry.extract_variables,
+                  signin_receipt: entry.signin_receipt
                 }
               });
             }
@@ -326,9 +327,11 @@
           status = res.status;
           headers = res.headers;
           config = res.config;
-          utils.storage.del('har_filename');
-          utils.storage.del('har_har');
-          utils.storage.del('har_env');
+          if (!$scope.data.workbenchDraft) {
+            utils.storage.del('har_filename');
+            utils.storage.del('har_har');
+            utils.storage.del('har_env');
+          }
           save_btn.button('reset');
           pathname = `/tpl/${data.id}/edit`;
           if (pathname !== location.pathname) {

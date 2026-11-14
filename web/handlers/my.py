@@ -38,7 +38,7 @@ class MyHandler(BaseHandler):
             if (await self.db.user.get(user['id'], fields=('role',)))['role'] == 'admin':
                 adminflg = True
 
-            tpls = await self.db.tpl.list(userid=user['id'], fields=('id', 'siteurl', 'sitename', 'banner', 'note', 'disabled', 'lock', 'last_success', 'ctime', 'mtime', 'fork', '_groups', 'updateable', 'tplurl'), limit=None)
+            tpls = await self.db.tpl.list(userid=user['id'], fields=('id', 'siteurl', 'sitename', 'banner', 'note', 'disabled', 'lock', 'browser', 'last_success', 'ctime', 'mtime', 'fork', '_groups', 'updateable', 'tplurl'), limit=None)
 
             tasks = await self.db.task.list(user['id'], fields=('id', 'tplid', 'note', 'disabled', 'last_success', 'success_count', 'failed_count', 'last_failed', 'next', 'last_failed_count', 'ctime', '_groups', 'browser_state'), limit=None)
             for task in tasks:

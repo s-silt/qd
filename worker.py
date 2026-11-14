@@ -329,7 +329,42 @@ class BaseWorker:
             next -= 3 * 60 * 60
         return next
 
-    async def do(self, task):
+    async def _execute_har_signin(self, task, tpl, env, sql_session):
+        fetch_tpl = await self.db.user.decrypt(
+            0 if not tpl['userid'] else task['userid'], tpl['tpl'], sql_session=sql_session
+        )
+        url = parse_url(env['variables'].get('_proxy'))
+        if not url:
+            new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env)
+        else:
+            proxy = {
+                'scheme': url['scheme'],
+                'host': url['host'],
+                'port': url['port'],
+                'username': url['username'],
+                'password': url['password'],
+            }
+            new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env, [proxy])
+        return new_env
+
+    async def _prepare_browser_signin(self, userid, task, tpl, env, sql_session):
+        if not config.ai_workbench_browser:
+            raise WorkbenchError('管理员尚未启用在线浏览器，请检查 AI_WORKBENCH_BROWSER')
+        state = None
+        if task['browser_session']:
+            state = await self.db.user.decrypt(userid, task['browser_session'], sql_session=sql_session)
+        script = (
+            await self.db.user.decrypt(userid, tpl['tpl'], sql_session=sql_session)
+            if tpl.get('browser')
+            else env['variables']['_qd_browser']
+        )
+        return script, state
+
+    async def _execute_browser_signin(self, script, state):
+        message, browser_state = await replay(script, state)
+        return {'variables': {'__log__': message}, 'session': []}, browser_state
+
+    async def do(self, task, *, manual=False):
         if not task.get('browser_state'):
             return await self._do(task)
         taskid = task['id']
@@ -341,11 +376,13 @@ class BaseWorker:
             current = await self.db.task.get(taskid)
             if not current or current['browser_state'] != Task.BROWSER_READY:
                 return False
-            return await self._do(current)
+            if not manual and (current['next'] is None or current['next'] > time.time()):
+                return False
+            return await self._do(current, manual=manual)
         finally:
             browser_task_locks.discard(taskid)
 
-    async def _do(self, task):
+    async def _do(self, task, *, manual=False):
         is_success = False
         should_push = 0
         userid = None
@@ -372,8 +409,8 @@ class BaseWorker:
         start = time.perf_counter()
 
         # ------------------------------------------------------------------ #
-        # Phase 1: 取数 + 校验 + 解密输入 + 执行签到 (do_fetch).
-        #   只有"真正执行签到"的步骤(取数/解密/do_fetch)决定成功失败.
+        # Phase 1: 取数 + 校验 + 解密输入 + 执行签到 (HAR / Browser 分离执行).
+        #   只有"真正执行签到"的步骤(取数/解密/执行)决定成功失败.
         #   [#23] 取数/解密异常也纳入兜底(下方 except), 保证 next 一定推进,
         #         不再 ~500ms 紧抓重试且永不退避.
         # ------------------------------------------------------------------ #
@@ -386,13 +423,13 @@ class BaseWorker:
                     return False
                 userid = user['id']
 
-                tpl = await self.db.tpl.get(task['tplid'], fields=('id', 'userid', 'sitename', 'siteurl', 'tpl', 'interval', 'last_success'), sql_session=sql_session)
+                tpl = await self.db.tpl.get(task['tplid'], fields=('id', 'userid', 'sitename', 'siteurl', 'tpl', 'browser', 'interval', 'last_success'), sql_session=sql_session)
                 if not tpl:
                     await self.db.tasklog.add(task['id'], False, msg='tpl missing, task disabled.', sql_session=sql_session)
                     await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
                     return False
 
-                if task['disabled']:
+                if task['disabled'] and not manual:
                     if browser_expected:
                         await self.db.task.mod(task['id'], next=None, **write_guard, sql_session=sql_session)
                         return False
@@ -411,27 +448,12 @@ class BaseWorker:
                 )
 
                 if task.get('browser_state'):
-                    if not config.ai_workbench_browser:
-                        raise WorkbenchError('管理员尚未启用在线浏览器，请检查 AI_WORKBENCH_BROWSER')
-                    state = await self.db.user.decrypt(userid, task['browser_session'], sql_session=sql_session)
+                    script, state = await self._prepare_browser_signin(userid, task, tpl, env, sql_session)
                 else:
-                    fetch_tpl = await self.db.user.decrypt(0 if not tpl['userid'] else task['userid'], tpl['tpl'], sql_session=sql_session)
-                    url = parse_url(env['variables'].get('_proxy'))
-                    if not url:
-                        new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env)
-                    else:
-                        proxy = {
-                            'scheme': url['scheme'],
-                            'host': url['host'],
-                            'port': url['port'],
-                            'username': url['username'],
-                            'password': url['password']
-                        }
-                        new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env, [proxy])
+                    new_env = await self._execute_har_signin(task, tpl, env, sql_session)
 
             if task.get('browser_state'):
-                message, browser_state = await replay(env['variables']['_qd_browser'], state)
-                new_env = {'variables': {'__log__': message}, 'session': []}
+                new_env, browser_state = await self._execute_browser_signin(script, state)
             is_success = True
         except Exception as e:
             # 取数/解密/do_fetch 任一失败 -> 本次签到失败.
@@ -458,6 +480,8 @@ class BaseWorker:
                         browser_fields['browser_session'] = await self.db.user.encrypt(
                             task['userid'], browser_state, sql_session=sql_session,
                         )
+                    if browser_expected and manual and task['disabled']:
+                        browser_fields['disabled'] = False
                     changed = await self.db.task.mod(task['id'],
                                            last_success=time.time(),
                                            last_failed_count=0,
@@ -477,7 +501,7 @@ class BaseWorker:
                 title = f"QD定时任务 {tpl['sitename']}-{task['note']} 成功"
                 content = new_env['variables'].get('__log__')
                 content = f"{t} \\r\\n日志：{content}"
-                should_push = 0x2
+                should_push = 0x8 if manual else 0x2
                 logger_worker.info('taskid:%d tplid:%d successed! %.5fs',
                                    task['id'], task['tplid'], time.perf_counter() - start)
             except Exception as e:
@@ -536,7 +560,7 @@ class BaseWorker:
                         content += f" \\r\\n任务已暂停，请前往 /ai-workbench/?task={task['id']} 验证后恢复"
                     else:
                         content += " \\r\\n任务已禁用(重试已耗尽), 请检查凭据/模板后手动启用"
-                    should_push = 0x1
+                    should_push = 0x4 if manual else 0x1
 
                 async with self.db.transaction() as sql_session:
                     if isinstance(e, PageVerification):
@@ -592,7 +616,7 @@ class BaseWorker:
                 await pushtool.pusher(userid, pushsw, should_push, title, content)
             except Exception as e:
                 logger_worker.error('taskid:%s push failed! %s', task.get('id'), str(e), exc_info=config.traceback_print)
-        reason = "" if is_success else str(exec_error or "")
+        reason = (str(new_env['variables'].get('__log__') or '') if manual else '') if is_success else str(exec_error or '')
         self.last_result = TaskRunResult(is_success, task.get("id"), reason)
         # 返回值保持 bool，既有调用方与测试用 `is True` / `is False` 判断。
         return True if is_success else False
@@ -622,6 +646,7 @@ class BaseWorker:
                     task['id'],
                     next=next_ts,
                     mtime=time.time(),
+                    **({'expected': {key: task[key] for key in ('browser_state', 'browser_session', 'disabled', 'newontime', 'next')}} if task.get('browser_state') else {}),
                     sql_session=sql_session,
                 )
             logger_worker.warning('taskid:%s next advanced by fallback after bookkeeping failure',

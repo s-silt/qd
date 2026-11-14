@@ -1,0 +1,89 @@
+.qd-shell {
+  --qd-gap: .875rem;
+  --qd-panel-padding: clamp(.875rem, 2.4vw, 1.5rem);
+  --qd-control-radius: .5rem;
+  max-inline-size: 78rem;
+  margin-inline: auto;
+  padding: 0 clamp(.75rem, 3vw, 1.5rem) 1.5rem;
+}
+
+.qd-browser-shell { max-inline-size: 105rem; }
+
+.qd-skip {
+  position: fixed;
+  z-index: 1;
+  inset-block-start: .5rem;
+  inset-inline-start: .75rem;
+  padding: .65rem .8rem;
+  border-radius: .5rem;
+  background: var(--surface);
+  transform: translateY(-200%);
+}
+.qd-skip:focus { transform: none; }
+
+.qd-header, .qd-heading, .qd-nav, .qd-panel-head, .qd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem .75rem;
+}
+.qd-header {
+  justify-content: space-between;
+  min-block-size: 4.5rem;
+  padding-block: .625rem;
+}
+.qd-heading { gap: .625rem; }
+.qd-heading h1 { font-size: clamp(1.05rem, .96rem + .35vw, 1.3rem); font-weight: 680; }
+.qd-nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: .25rem;
+}
+.qd-nav :is(a, [aria-current="page"]) {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2.5rem;
+  padding: .25rem .55rem;
+  border: 1px solid transparent;
+  border-radius: var(--qd-control-radius);
+  font-size: .9rem;
+  line-height: 1.25;
+  text-underline-offset: .2em;
+}
+.qd-nav a:hover { background: var(--soft); }
+.qd-nav [aria-current="page"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.qd-panel { padding: var(--qd-panel-padding); }
+.qd-panel h2 { font-size: 1.17rem; line-height: 1.35; }
+.qd-panel h3 { font-size: .98rem; line-height: 1.4; }
+.qd-panel-head { justify-content: space-between; margin-block-end: .75rem; }
+.qd-shell :is(.button, .primary) { min-block-size: 2.5rem; }
+.qd-shell :where(label) { font-weight: 600; }
+.qd-shell :where(input:not([type="checkbox"], [type="radio"]), textarea, select) {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--qd-control-radius);
+  padding: .5rem .625rem;
+  color: var(--ink);
+  background: var(--soft);
+  font: inherit;
+  font-weight: 400;
+}
+.qd-shell :where(textarea) { resize: vertical; }
+
+@media (max-width: 47.5rem) {
+  .qd-header { gap: .25rem .75rem; }
+  .qd-header nav { flex-basis: 100%; }
+  .qd-nav :is(a, [aria-current="page"]), .qd-shell :is(.button, .primary) { min-block-size: 2.75rem; }
+}
+@media (forced-colors: active) {
+  .qd-nav [aria-current="page"] { border-color: ButtonText; }
+}

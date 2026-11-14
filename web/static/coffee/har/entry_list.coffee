@@ -30,7 +30,7 @@ define (require, exports, module) ->
         if (x for x in $scope.har.log.entries when x.recommend).length > 0
           $scope.filter.recommend = true
 
-        if not $scope.readonly
+        if not $scope.readonly and not data.workbenchDraft
           utils.storage.set('har_filename', $scope.filename)
           utils.storage.set('har_env', $scope.env)
           if data.upload
@@ -46,7 +46,7 @@ define (require, exports, module) ->
           console.debug('local saved')
           resortEntryList()
           sortRequest($('#sortBtn')[0])
-          utils.storage.set('har_har', $scope.har)
+          utils.storage.set('har_har', $scope.har) unless $scope.data.workbenchDraft
       ), 1)
 
       $scope.save_change = () ->
@@ -175,6 +175,7 @@ define (require, exports, module) ->
             success_asserts: entry.success_asserts
             failed_asserts: entry.failed_asserts
             extract_variables: entry.extract_variables
+            signin_receipt: entry.signin_receipt
           }
           } for entry in har.log.entries when entry.checked)
 
@@ -199,9 +200,10 @@ define (require, exports, module) ->
           status = res.status
           headers = res.headers
           config = res.config
-          utils.storage.del('har_filename')
-          utils.storage.del('har_har')
-          utils.storage.del('har_env')
+          unless $scope.data.workbenchDraft
+            utils.storage.del('har_filename')
+            utils.storage.del('har_har')
+            utils.storage.del('har_env')
           save_btn.button('reset')
           pathname = "/tpl/#{data.id}/edit"
           if pathname != location.pathname

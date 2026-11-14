@@ -64,25 +64,28 @@ QD [v20261002] —— 一个<b>HTTP请求定时任务自动执行框架</b> base
 快速开始
 ==========
 
-本 fork（[s-silt/qd](https://github.com/s-silt/qd)）在原版基础上新增了 **AI 智能识别签到**、**URL 自动抓包（Playwright）** 等能力，并做了运行时与安全方面的修复。建议按以下顺序阅读：
+本 fork（[s-silt/qd](https://github.com/s-silt/qd)）提供 **AI 签到工作台**，可从浏览器 HAR 或在线录制起草签到模板。
 
 1. **[Docker 部署教程](./web/docs/zh_CN/guide/docker-deploy.md)** —— 从零开始用 Docker 部署本 fork（含 MySQL、Nginx + HTTPS、备份回滚、常见问题）
 2. **[HAR 抓包教程](./web/docs/zh_CN/guide/har-capture.md)** —— 浏览器（Chrome/Edge/Firefox/Safari）、桌面工具（Fiddler/Charles/mitmproxy）、移动端（Android/iOS）抓 HAR 完整指南
-3. **[AI 自动生成签到模板](./web/docs/zh_CN/guide/ai-sign-template.md)** —— 把抓到的 HAR 一键交给 AI（DeepSeek / OpenAI / 通义 / 本地 Ollama）自动识别签到接口，生成 QD 模板
-4. **[URL 自动抓包](./web/docs/zh_CN/guide/auto-capture.md)** —— 给 URL + Cookie，QD 自动用 Playwright 加载页面、找签到按钮、录制 HAR 并交给 AI 生成模板，一气呵成
+3. **[从 HAR 编写签到模板](./web/docs/zh_CN/guide/ai-sign-template.md)** —— 分析脱敏记录，在模板编辑器审核、修改、试跑和保存
+4. **[使用 QD 在线录制](./web/docs/zh_CN/guide/auto-capture.md)** —— 在工作台的浏览器中登录，录制签到操作并试跑脚本
 
 ### AI 签到工作台
 
-从「我的任务」打开 **AI 签到工作台**（`/ai-workbench/`）。对话区可打开网站并向自建模型提问。在线浏览器区可直接登录、拖动滑块、输入验证码或短信码，以及显示微信二维码并切换登录弹窗。
+从「我的任务」打开 **AI 签到工作台**（`/ai-workbench/`）。用桌面浏览器登录站点，清空开发者工具的「网络」面板，手动签到一次，再导出不含敏感数据的 HAR。工作台根据录到的同源请求整理签到步骤和成功条件。选择「编辑和试跑」检查请求、变量及断言，查看站点回执后保存模板并创建任务。
+
+站点支持在 QD 浏览器中正常登录时，也可以切到「使用 QD 在线录制」（`/ai-workbench/?mode=browser`）。已有浏览器任务的登录恢复仍从任务页进入。
 
 1. 给 QD 配置 `AI_BASE_URL`（OpenAI 兼容接口，例如 `http://你的模型服务:11434/v1`）、`AI_MODEL` 和 `AI_API_KEY`。仅在信任且无需密钥的自建服务上启用 `AI_ALLOW_NO_KEY=true`。
 2. 设置 `AI_WORKBENCH_BROWSER=true`，使用支持 Chromium 的构建、单进程 Web 服务和独立的 `COOKIE_SECRET`、`AES_KEY`。Docker Compose 可在项目目录的 `.env` 设置这些变量后执行 `docker compose up -d --build`。已有数据库请保留现有的安全密钥。使用示例 `AES_KEY` 的旧实例需要先迁移加密数据再换密钥。源码运行时可用 `playwright install chromium` 安装浏览器，或用 `PLAYWRIGHT_CHROMIUM_PATH` 指定已安装的 Chromium。
-3. 打开允许自动签到的网站，在浏览器完成登录和验证，进入签到页面。点击「已登录，录制签到」。若站点按钮无法唯一识别，按提示手动点击，再结束录制。
-4. 查看脱敏的请求摘要和站点结果，设置每天执行的服务器时间。定时器使用加密保存的站点 Cookie、Local Storage 和 IndexedDB 回放录制操作。站点要求重新验证时任务会暂停，从任务列表或执行日志进入「重新验证」即可恢复。
+3. 输入模板库里没有的网站，在浏览器完成登录和验证，进入签到页面。可以选择「已登录，自动识别签到」，或用「手动录制」记录自己的签到操作，再选择「结束录制并分析」。AI 根据脱敏摘要整理录制步骤，可展开查看脚本 JSON。
+4. 可以先「试跑脚本」，再选「保存并签到」立即执行，选「保存并定时」设定每日服务器时间，或只保存到「我的模板」。从模板可以再次试跑或创建任务。删除任务后模板仍可复用。
+5. 定时器使用加密保存的站点 Cookie、Local Storage 和 IndexedDB 回放脚本。站点要求重新验证时任务会暂停，从任务列表或执行日志进入「重新验证」即可恢复。
 
 验证码、短信和扫码由用户在站点完成。模型只收到签到请求的方法、脱敏路径、类型、状态码和本地判定结果。登录视图、账号密码、验证码、请求头和正文都留在 QD 与目标网站之间。浏览器支持公网 HTTP(S) 标准端口，站点白名单启用时需包含用到的登录域和资源域。站点改版、登录状态失效或出现无法识别的结果时，可手动验证或重新录制。
 
-浏览器任务的登录状态仅保存在加密数据库中。普通 JSON 模板备份会跳过浏览器任务。迁移浏览器任务时使用完整数据库备份和原有加密密钥。
+普通 JSON 备份可迁移浏览器脚本。恢复模板后，重新登录站点即可创建任务。迁移浏览器任务和已绑定的登录状态需要完整数据库备份和原有加密密钥。
 
 开箱即用示例：
 
