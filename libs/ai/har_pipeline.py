@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import config
 
 from libs.ai.errors import AIClientError, HARSizeLimitExceeded
+from libs.ai.har_redaction import AUTH_ROUTE, known_credentials, placeholder, redact_text, redact_url, sensitive
 
 try:
     from libs.log import Log  # type: ignore
@@ -150,6 +151,7 @@ def _slim_entry(
     entry: Dict[str, Any],
     body_truncate: int = 500,
     header_truncate: int = 200,
+    known: tuple = (),
 ) -> Dict[str, Any]:
     """裁剪单个 HAR entry 仅保留 AI 需要的字段。
 
@@ -165,19 +167,21 @@ def _slim_entry(
     # 只保留有信息量的请求头
     keep_headers = {
         "content-type", "accept", "x-requested-with", "referer",
-        "origin", "authorization", "x-csrf-token",
+        "origin", "authorization", "x-csrf-token", "cookie",
     }
     slim_headers = [
-        {"name": h.get("name", ""), "value": h.get("value", "")[:header_truncate]}
+        {"name": h.get("name", ""), "value": _safe_header(h, known)[:header_truncate]}
         for h in headers
         if h.get("name", "").lower() in keep_headers
     ]
     post_data = req.get("postData", {}) or {}
-    body_text = post_data.get("text", "") or ""
+    body_text = redact_text((post_data.get("text", "") or "")[:max(body_truncate + 2000, 8192)], known)
     if len(body_text) > body_truncate:
         body_text = body_text[:body_truncate] + "...(truncated)"
 
-    resp_content = (resp.get("content", {}) or {}).get("text", "") or ""
+    content = resp.get("content", {}) or {}
+    raw_response = (content.get("text", "") or "")[:65536]
+    resp_content = redact_text(raw_response, known) if not content.get("encoding") else ""
     # 先从完整响应体结构化提取关键字段, 再截断预览 (P1 #32):
     # 这样 duplicate/已签到/未登录 等后段标志即使被预览截断仍可被 LLM 读到。
     resp_signals = _extract_response_signals(resp_content)
@@ -188,9 +192,9 @@ def _slim_entry(
 
     slim: Dict[str, Any] = {
         "method": req.get("method", "GET"),
-        "url": req.get("url", "")[:500],
+        "url": redact_url(req.get("url", ""), known)[:500],
         "headers": slim_headers,
-        "cookieNames": [c.get("name", "") for c in cookies][:10],
+        "cookieNames": [redact_text(c.get("name", "") or "", known) for c in cookies][:10],
         "body": body_text,
         "respStatus": resp.get("status", 0),
         "respMime": (resp.get("content", {}) or {}).get("mimeType", ""),
@@ -199,6 +203,20 @@ def _slim_entry(
     if resp_signals:
         slim["respSignals"] = resp_signals
     return slim
+
+
+def _safe_header(header, known):
+    name = header.get("name", "").lower()
+    value = header.get("value", "") or ""
+    if name == "authorization":
+        return "Bearer {{token}}" if value.lower().startswith("bearer ") else "{{authorization}}"
+    if name == "cookie":
+        return "{{cookie}}"
+    if sensitive(name):
+        return placeholder(name)
+    if name in ("origin", "referer"):
+        return redact_url(value, known)
+    return redact_text(value, known)
 
 
 def preprocess_har(
@@ -218,7 +236,14 @@ def preprocess_har(
     if header_truncate is None:
         header_truncate = getattr(config, "ai_har_header_truncate_bytes", 200)
     entries = (har_data.get("log", {}) or {}).get("entries", []) or []
-    filtered = [e for e in entries if not _is_noise(e, hint)]
+    filtered = []
+    for entry in entries:
+        try:
+            url = urlparse(entry["request"]["url"])
+            if not AUTH_ROUTE.search(url.path) and not _is_noise(entry, hint):
+                filtered.append(entry)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
 
     # 排序优先级 (P1 #16): 先签到链关键请求 (含取 token 的 GET), 再 POST/PUT 修改类,
     # 最后普通 GET。保证 max_entries 截断时不会把取 token / 签到步骤切掉。
@@ -232,10 +257,9 @@ def preprocess_har(
         )
 
     filtered.sort(key=_rank)
-    return [
-        _slim_entry(e, body_truncate=body_truncate, header_truncate=header_truncate)
-        for e in filtered[:max_entries]
-    ]
+    known = tuple(known_credentials(entries))
+    return [_slim_entry(e, body_truncate=body_truncate, header_truncate=header_truncate, known=known)
+            for e in filtered[:max_entries]]
 
 
 # ---------- Prompt 构造 ---------- #
@@ -506,7 +530,7 @@ def build_messages(
     slim_entries: List[Dict[str, Any]], hint: str = ""
 ) -> List[Dict[str, str]]:
     user_payload = {
-        "hint": hint or "",
+        "hint": redact_text(hint or ""),
         "entries": slim_entries,
     }
 

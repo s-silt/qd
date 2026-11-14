@@ -268,7 +268,9 @@ class DBconverter:
             `ontime` VARCHAR(256) NOT NULL DEFAULT '00:10:00',
             `_groups` VARCHAR(256) NOT NULL DEFAULT 'None',
             `pushsw`  VARCHAR(128) NOT NULL DEFAULT '{"logen":false,"pushen":true}',
-            `newontime`  VARCHAR(256) NOT NULL DEFAULT '{"sw":false,"time":"00:10:10","randsw":false,"tz1":0,"tz2":0}'
+            `newontime`  VARCHAR(256) NOT NULL DEFAULT '{"sw":false,"time":"00:10:10","randsw":false,"tz1":0,"tz2":0}',
+            `browser_state` INTEGER NOT NULL DEFAULT 0,
+            `browser_session` MEDIUMBLOB NULL
             );"""
                 % autokey
             )
@@ -767,9 +769,18 @@ class DBconverter:
             logger_db_converter.debug(e)
 
         try:
-            await _convert_task(group_with_underline=True)
-        except Exception as e:
-            logger_db_converter.debug(e)
+            await self.db.task.list(limit=1, fields=("browser_state",))
+        except Exception as exc:
+            if "browser_state" not in str(exc):
+                raise
+            await exec_shell("ALTER TABLE `task` ADD `browser_state` INTEGER NOT NULL DEFAULT 0")
+
+        try:
+            await self.db.task.list(limit=1, fields=("browser_session",))
+        except Exception as exc:
+            if "browser_session" not in str(exc):
+                raise
+            await exec_shell("ALTER TABLE `task` ADD `browser_session` MEDIUMBLOB NULL")
 
         try:
             # deepcode ignore change_to_is: use "is" will cause error

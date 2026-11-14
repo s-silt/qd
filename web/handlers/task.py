@@ -15,6 +15,7 @@ from tornado.iostream import StreamClosedError
 from tornado.web import HTTPError, authenticated
 
 import config
+from db.task import Task
 from libs.funcs import Cal, Pusher
 from libs.parse_url import parse_url
 from web.handlers.base import BaseHandler, logger_web_handler
@@ -24,7 +25,7 @@ class TaskNewHandler(BaseHandler):
     async def get(self):
         user = self.current_user
         tplid = self.get_argument("tplid", None)
-        fields = ("id", "sitename", "success_count")
+        fields = ("id", "sitename", "success_count", "lock", "_groups")
 
         tpls = []
         if user:
@@ -38,6 +39,7 @@ class TaskNewHandler(BaseHandler):
             await self.db.tpl.list(userid=None, public=1, fields=fields, limit=None),
             key=lambda t: -t["success_count"],
         )
+        tpls = [tpl for tpl in tpls if not (tpl.get("lock") and tpl.get("_groups") == Task.BROWSER_GROUP)]
 
         if not tplid:
             for tpl in tpls:
@@ -109,9 +111,11 @@ class TaskNewHandler(BaseHandler):
         async with self.db.transaction() as sql_session:
             tpl = self.check_permission(
                 await self.db.tpl.get(
-                    tplid, fields=("id", "userid", "interval"), sql_session=sql_session
+                    tplid, fields=("id", "userid", "interval", "lock", "_groups"), sql_session=sql_session
                 )
             )
+            if tpl.get("lock") and tpl.get("_groups") == Task.BROWSER_GROUP:
+                raise HTTPError(400, reason="请在 AI 签到工作台创建或更新此任务")
             envs = {}
             for key in self.request.body_arguments:
                 envs[key] = self.get_body_arguments(key)
@@ -281,6 +285,18 @@ class TaskEditHandler(TaskNewHandler):
 class TaskRunHandler(BaseHandler):
     @authenticated
     async def post(self, taskid):
+        task = self.check_permission(
+            await self.db.task.get(taskid, fields=("id", "userid", "browser_state")), "w"
+        )
+        if task["browser_state"]:
+            if task["browser_state"] == Task.BROWSER_VERIFY:
+                self.redirect(f"/ai-workbench/?task={taskid}")
+                return
+            from worker import BaseWorker
+
+            await BaseWorker(self.db).do(task)
+            self.redirect(f"/task/{taskid}/log")
+            return
         self.evil(+2)
         start_ts = int(time.time())
         user = self.current_user
@@ -475,14 +491,14 @@ class TaskLogHandler(BaseHandler):
     async def get(self, taskid):
         # user = self.current_user
         task = self.check_permission(
-            await self.db.task.get(taskid, fields=("id", "tplid", "userid", "disabled"))
+            await self.db.task.get(taskid, fields=("id", "tplid", "userid", "disabled", "browser_state"))
         )
 
         tasklog = await self.db.tasklog.list(
             taskid=taskid, fields=("success", "ctime", "msg")
         )
 
-        await self.render("tasklog.html", task=task, tasklog=tasklog)
+        await self.render("tasklog.html", task=task, tasklog=tasklog, browser_verify=Task.BROWSER_VERIFY)
 
 
 class TotalLogHandler(BaseHandler):
@@ -622,9 +638,9 @@ class TaskDelHandler(BaseHandler):
     async def post(self, taskid):
         # user = self.current_user
         async with self.db.transaction() as sql_session:
-            self.check_permission(
+            task = self.check_permission(
                 await self.db.task.get(
-                    taskid, fields=("userid",), sql_session=sql_session
+                    taskid, fields=("userid", "tplid", "browser_state"), sql_session=sql_session
                 ),
                 "w",
             )
@@ -634,6 +650,8 @@ class TaskDelHandler(BaseHandler):
             for log in logs:
                 await self.db.tasklog.delete(log["id"], sql_session=sql_session)
             await self.db.task.delete(taskid, sql_session=sql_session)
+            if task.get("browser_state"):
+                await self.db.tpl.delete(task["tplid"], sql_session=sql_session)
 
         self.redirect("/my/")
 

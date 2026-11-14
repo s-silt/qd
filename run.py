@@ -29,8 +29,8 @@ if sys.getdefaultencoding() != 'utf-8':
 
 def _check_ai_config(logger):
     """AI 密钥只允许来自环境变量。空 key 关闭功能，不把默认地址当成已启用。"""
-    if not config.ai_api_key:
-        logger.info("AI 功能未启用 (AI_API_KEY 为空)")
+    if not (config.ai_api_key or config.ai_allow_no_key):
+        logger.info("AI 功能未启用 (未配置模型认证)")
         return
     logger.info(
         "AI 功能已启用 model=%s base_url=%s",

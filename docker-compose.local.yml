@@ -19,8 +19,9 @@ services:
     environment:
       # === 基础设置（生产环境务必修改下面三项）===
       - DOMAIN=
-      - COOKIE_SECRET=please-change-to-a-long-random-string
-      - AES_KEY=please-change-to-a-long-random-string
+      - COOKIE_SECRET=${COOKIE_SECRET:-}
+      # Preserve the existing encryption key for installations created with this file.
+      - AES_KEY=${AES_KEY:-please-change-to-a-long-random-string}
 
       # === Redis ===
       - REDISCLOUD_URL=redis://redis:6379
@@ -32,10 +33,12 @@ services:
       # - PLAYWRIGHT_ALLOW_HOSTS=example.com,foo.com  # 白名单，防 SSRF
 
       # === AI 辅助签到模板生成（兼容 OpenAI 协议）===
-      # 取消注释并填入 API Key 即可启用 HAR 编辑器右上角 "AI 智能识别签到" 按钮
-      # - AI_API_KEY=sk-xxxxxxxxxxxxxxxx
-      # - AI_BASE_URL=https://api.deepseek.com/v1
-      # - AI_MODEL=deepseek-chat
+      # 在 .env 中设置模型的地址、名称与认证方式
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_BASE_URL=${AI_BASE_URL:-https://api.openai.com/v1}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_ALLOW_NO_KEY=${AI_ALLOW_NO_KEY:-false}
+      - AI_WORKBENCH_BROWSER=${AI_WORKBENCH_BROWSER:-false}
       # - AI_TIMEOUT=60
       # - AI_MAX_HAR_ENTRIES=60
 

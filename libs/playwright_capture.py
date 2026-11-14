@@ -32,6 +32,7 @@ PLAYWRIGHT_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() not in (
 )
 PLAYWRIGHT_MAX_CONCURRENT = int(os.getenv("PLAYWRIGHT_MAX_CONCURRENT", "2"))
 PLAYWRIGHT_DEFAULT_TIMEOUT_MS = int(os.getenv("PLAYWRIGHT_DEFAULT_TIMEOUT_MS", "60000"))
+PLAYWRIGHT_CHROMIUM_PATH = os.getenv("PLAYWRIGHT_CHROMIUM_PATH") or None
 PLAYWRIGHT_ALLOW_HOSTS = [
     h.strip()
     for h in os.getenv("PLAYWRIGHT_ALLOW_HOSTS", "").split(",")
@@ -89,7 +90,7 @@ def _get_init_lock() -> "asyncio.Lock":
     return _init_lock
 
 
-def _check_host_allowed(host: str) -> Optional[str]:
+def _check_host_allowed(host: str, *, public_only: bool = False) -> Optional[str]:
     """统一的目标 host 校验: 白名单 + IP 段拦截【叠加】。
 
     返回拦截原因字符串; 放行返回 None。
@@ -104,13 +105,13 @@ def _check_host_allowed(host: str) -> Optional[str]:
     if PLAYWRIGHT_ALLOW_HOSTS:
         if not any(h == a or h.endswith("." + a) for a in PLAYWRIGHT_ALLOW_HOSTS):
             return f"hostname 不在 PLAYWRIGHT_ALLOW_HOSTS 白名单内: {h}"
-    reason = resolve_blocked_reason(h)
+    reason = resolve_blocked_reason(h, public_only=True) if public_only else resolve_blocked_reason(h)
     if reason:
         return reason
     return None
 
 
-async def _route_guard(route) -> None:
+async def _route_guard(route, *, public_only: bool = False) -> None:
     """page.route 处理器: 对每一跳(含重定向 Location / 子资源)做白名单 +
     IP 段拦截, 命中内网 / 云元数据则 abort, 否则放行。"""
     try:
@@ -118,9 +119,12 @@ async def _route_guard(route) -> None:
     except Exception:
         req_url = ""
     host = urlparse(req_url).hostname or ""
-    reason = _check_host_allowed(host)
+    if public_only:
+        reason = await asyncio.to_thread(_check_host_allowed, host, public_only=True)
+    else:
+        reason = _check_host_allowed(host)
     if reason:
-        logger.warning("[security] 抓包拦截请求 %s: %s", req_url, reason)
+        logger.warning("[security] 抓包拦截主机 %s: %s", host, reason)
         try:
             await route.abort()
         except Exception:
@@ -259,10 +263,9 @@ async def init_browser():
         _playwright_ctx = await async_playwright().start()
         _browser = await _playwright_ctx.chromium.launch(
             headless=PLAYWRIGHT_HEADLESS,
+            executable_path=PLAYWRIGHT_CHROMIUM_PATH,
             args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled",
             ],
         )
         _initialized = True

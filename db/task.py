@@ -22,6 +22,9 @@ class Task(BaseDB, AlchemyMixin):
     id, tplid, userid, disabled, init_env, env, session, retry_count, retry_interval, last_success, success_count, failed_count, last_failed, next, ctime, mtime
     '''
     __tablename__ = 'task'
+    BROWSER_READY = 1
+    BROWSER_VERIFY = 2
+    BROWSER_GROUP = 'AI 签到'
     id = Column(Integer, primary_key=True)
     tplid = Column(INTEGER, nullable=False)
     userid = Column(INTEGER, nullable=False)
@@ -37,8 +40,10 @@ class Task(BaseDB, AlchemyMixin):
     _groups = Column(String(256), nullable=False, server_default=text("'None'"))
     pushsw = Column(String(128), nullable=False, server_default=text('\'{"logen":false,"pushen":true}\''))
     newontime = Column(String(256), nullable=False, server_default=text('\'{"sw":false,"time":"00:10:10","randsw":false,"tz1":0,"tz2":0}\''))
+    browser_state = Column(INTEGER, nullable=False, server_default=text("0"))
     init_env = Column(LargeBinary)
     env = Column(LargeBinary)
+    browser_session = Column(LargeBinary)
     session = Column(LargeBinary)
     retry_interval = Column(INTEGER)
     last_success = Column(INTEGER)
@@ -68,13 +73,16 @@ class Task(BaseDB, AlchemyMixin):
         )
         return self._insert(Task(**insert), sql_session=sql_session)
 
-    def mod(self, id, sql_session=None, **kwargs):
+    def mod(self, id, sql_session=None, *, expected=None, **kwargs):
         assert id, 'need id'
         assert 'id' not in kwargs, 'id not modifiable'
         assert 'ctime' not in kwargs, 'ctime not modifiable'
 
         kwargs['mtime'] = time.time()
-        return self._update(update(Task).where(Task.id == id).values(**kwargs), sql_session=sql_session)
+        statement = update(Task).where(Task.id == id)
+        if expected is not None:
+            statement = statement.where(*(getattr(Task, key) == value for key, value in expected.items()))
+        return self._update(statement.values(**kwargs), sql_session=sql_session)
 
     async def get(self, id, fields=None, one_or_none=False, first=True, to_dict=True, sql_session=None):
         assert id, 'need id'
@@ -100,7 +108,7 @@ class Task(BaseDB, AlchemyMixin):
             smtm = smtm.where(Task.userid == userid)
 
         if scan and scan_time is not None:
-            smtm = smtm.where(Task.next <= scan_time)
+            smtm = smtm.where(Task.next <= scan_time, Task.browser_state != self.BROWSER_VERIFY)
 
         for key, value in kwargs.items():
             col = getattr(Task, key)

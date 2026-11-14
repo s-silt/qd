@@ -130,10 +130,9 @@ def chat_completions_url(base_url: str) -> str:
 
 
 def isolate_headers(api_key: str, extra: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     if extra:
         headers.update(dict(extra))
     return headers

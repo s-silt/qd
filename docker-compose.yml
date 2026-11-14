@@ -12,9 +12,10 @@ services:
     restart: unless-stopped  # DB/Redis 未就绪等异常时自动重启, 避免容器一崩就永久退出
     environment:
       - DOMAIN=
-      - COOKIE_SECRET=binux
+      - COOKIE_SECRET=${COOKIE_SECRET:-}
       - PBKDF2_ITERATIONS=600000
-      - AES_KEY=binux
+      # Preserve the existing encryption key for installations created with this file.
+      - AES_KEY=${AES_KEY:-binux}
       - REDISCLOUD_URL=redis://redis:6379
       # Playwright 配置
       - PLAYWRIGHT_HEADLESS=true
@@ -22,9 +23,11 @@ services:
       - PLAYWRIGHT_DEFAULT_TIMEOUT_MS=60000
       # - PLAYWRIGHT_ALLOW_HOSTS=example.com,foo.com  # 白名单，防 SSRF
       # AI 辅助签到
-      # - AI_API_KEY=
-      # - AI_BASE_URL=https://api.openai.com/v1
-      # - AI_MODEL=gpt-4o-mini
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_BASE_URL=${AI_BASE_URL:-https://api.openai.com/v1}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_ALLOW_NO_KEY=${AI_ALLOW_NO_KEY:-false}
+      - AI_WORKBENCH_BROWSER=${AI_WORKBENCH_BROWSER:-false}
       # - AI_TIMEOUT=60
 
   redis:

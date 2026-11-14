@@ -45,7 +45,7 @@ class AIClient:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.api_key or config.ai_allow_no_key)
 
     def prepare(
         self,
@@ -57,7 +57,7 @@ class AIClient:
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         if not self.enabled:
-            raise AIClientError("未配置 AI_API_KEY，无法使用 AI 功能")
+            raise AIClientError("请配置 AI_API_KEY，或为自建模型启用 AI_ALLOW_NO_KEY")
         return prepare_chat_request(
             messages,
             model=self.model,

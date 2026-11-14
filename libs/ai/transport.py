@@ -34,9 +34,9 @@ class ChatTransport:
         owns_session = session is None
         sess = session or aiohttp.ClientSession(timeout=timeout)
         try:
-            async with sess.post(url, json=dict(payload), headers=headers) as resp:
+            async with sess.post(url, json=dict(payload), headers=headers, allow_redirects=False) as resp:
                 text = await resp.text()
-                if resp.status >= 400:
+                if not 200 <= resp.status < 300:
                     raise map_http_error(resp.status, text)
                 try:
                     data = json.loads(text)
@@ -72,8 +72,8 @@ class ChatTransport:
         owns_session = session is None
         sess = session or aiohttp.ClientSession(timeout=timeout)
         try:
-            async with sess.post(url, json=dict(payload), headers=headers) as resp:
-                if resp.status >= 400:
+            async with sess.post(url, json=dict(payload), headers=headers, allow_redirects=False) as resp:
+                if not 200 <= resp.status < 300:
                     text = await resp.text()
                     raise map_http_error(resp.status, text)
                 async for chunk in resp.content.iter_any():

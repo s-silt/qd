@@ -38,3 +38,6 @@ section h2 a.btn {
 [data-toggle=popover] {
   cursor: pointer;
 }
+
+.browser-run-form { display: inline-block; padding: 0; margin: 0; }
+.browser-run-form button { margin: 0; }

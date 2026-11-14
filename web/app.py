@@ -46,6 +46,7 @@ class Application(tornado.web.Application):
             auto_reload=config.autoreload)
 
         self.db = db
+        self.workbench_sessions = {}
         self.version = default_version or 'Debug'
 
         self.fetcher = Fetcher()

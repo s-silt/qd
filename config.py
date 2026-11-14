@@ -374,7 +374,8 @@ ga_key = os.getenv("GA_KEY", "")  # Google Analytics (GA) 密钥, 为空则不�
 
 # AI 辅助签到设置
 # 兼容 OpenAI Chat Completions 协议的任意服务（OpenAI、DeepSeek、通义、Moonshot、本地 Ollama 等）
-ai_api_key = os.getenv("AI_API_KEY", "")  # 模型服务 API Key, 为空则禁用 AI 功能
+ai_api_key = os.getenv("AI_API_KEY", "")  # 模型服务 API Key，未配置时可显式启用 AI_ALLOW_NO_KEY
+ai_allow_no_key = bool(strtobool(os.getenv("AI_ALLOW_NO_KEY", "False")))
 ai_base_url = os.getenv(
     "AI_BASE_URL", "https://api.openai.com/v1"
 )  # 模型服务 Base URL, 需兼容 OpenAI Chat Completions 协议
@@ -389,6 +390,9 @@ ai_har_body_truncate_bytes = int(
 ai_har_header_truncate_bytes = int(
     os.getenv("AI_HAR_HEADER_TRUNCATE_BYTES", "200")
 )  # 单个 header value 超过此字节数被截断
+
+# Advanced option for administrators who want the server to host public-site login sessions.
+ai_workbench_browser = bool(strtobool(os.getenv("AI_WORKBENCH_BROWSER", "False")))
 
 # 注: URL 自动抓包已改为「进程内置 Playwright」(见 libs/playwright_capture.py),
 # 不再使用独立 sidecar。原 PLAYWRIGHT_SIDECAR_URL / PLAYWRIGHT_CAPTURE_TIMEOUT /

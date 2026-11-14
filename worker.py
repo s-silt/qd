@@ -20,12 +20,15 @@ from tornado.concurrent import Future  # used by BatchWorker.done callback
 
 import config
 from db import DB
+from db.task import Task
 from libs.fetcher import Fetcher
 from libs.funcs import Cal, Pusher
 from libs.log import Log
 from libs.parse_url import parse_url
+from libs.signin_workbench import PageVerification, VerificationNeeded, WorkbenchError, replay
 
 logger_worker = Log('QD.Worker').getlogger()
+browser_task_locks = set()
 
 
 class TaskRunResult:
@@ -327,6 +330,22 @@ class BaseWorker:
         return next
 
     async def do(self, task):
+        if not task.get('browser_state'):
+            return await self._do(task)
+        taskid = task['id']
+        if taskid in browser_task_locks:
+            return False
+        browser_task_locks.add(taskid)
+        try:
+            # A queued snapshot can predate revalidation, a schedule edit, or deletion.
+            current = await self.db.task.get(taskid)
+            if not current or current['browser_state'] != Task.BROWSER_READY:
+                return False
+            return await self._do(current)
+        finally:
+            browser_task_locks.discard(taskid)
+
+    async def _do(self, task):
         is_success = False
         should_push = 0
         userid = None
@@ -344,6 +363,11 @@ class BaseWorker:
         tpl = None
         user = None
         new_env = None
+        browser_state = None
+        browser_expected = {
+            key: task[key] for key in ('browser_state', 'browser_session', 'disabled', 'newontime', 'next')
+        } if task.get('browser_state') else {}
+        write_guard = {'expected': browser_expected} if browser_expected else {}
         exec_error = None
         start = time.perf_counter()
 
@@ -369,6 +393,9 @@ class BaseWorker:
                     return False
 
                 if task['disabled']:
+                    if browser_expected:
+                        await self.db.task.mod(task['id'], next=None, **write_guard, sql_session=sql_session)
+                        return False
                     await self.db.tasklog.add(task['id'], False, msg='task disabled.', sql_session=sql_session)
                     await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
                     return False
@@ -378,26 +405,34 @@ class BaseWorker:
                     await self.db.task.mod(task['id'], next=None, disabled=1, sql_session=sql_session)
                     return False
 
-                fetch_tpl = await self.db.user.decrypt(0 if not tpl['userid'] else task['userid'], tpl['tpl'], sql_session=sql_session)
                 env = dict(
                     variables=await self.db.user.decrypt(task['userid'], task['init_env'], sql_session=sql_session),
                     session=[],
                 )
 
-                url = parse_url(env['variables'].get('_proxy'))
-                if not url:
-                    new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env)
+                if task.get('browser_state'):
+                    if not config.ai_workbench_browser:
+                        raise WorkbenchError('管理员尚未启用在线浏览器，请检查 AI_WORKBENCH_BROWSER')
+                    state = await self.db.user.decrypt(userid, task['browser_session'], sql_session=sql_session)
                 else:
-                    proxy = {
-                        'scheme': url['scheme'],
-                        'host': url['host'],
-                        'port': url['port'],
-                        'username': url['username'],
-                        'password': url['password']
-                    }
-                    new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env, [proxy])
+                    fetch_tpl = await self.db.user.decrypt(0 if not tpl['userid'] else task['userid'], tpl['tpl'], sql_session=sql_session)
+                    url = parse_url(env['variables'].get('_proxy'))
+                    if not url:
+                        new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env)
+                    else:
+                        proxy = {
+                            'scheme': url['scheme'],
+                            'host': url['host'],
+                            'port': url['port'],
+                            'username': url['username'],
+                            'password': url['password']
+                        }
+                        new_env, _ = await self.fetcher.do_fetch(fetch_tpl, env, [proxy])
 
-                is_success = True
+            if task.get('browser_state'):
+                message, browser_state = await replay(env['variables']['_qd_browser'], state)
+                new_env = {'variables': {'__log__': message}, 'session': []}
+            is_success = True
         except Exception as e:
             # 取数/解密/do_fetch 任一失败 -> 本次签到失败.
             is_success = False
@@ -418,8 +453,12 @@ class BaseWorker:
                     session = await self.db.user.encrypt(task['userid'],
                                                          new_env['session'].to_json() if hasattr(new_env['session'], 'to_json') else new_env['session'], sql_session=sql_session)
                     next = self._cal_success_next(task, tpl)
-                    await self.db.tasklog.add(task['id'], success=True, msg=new_env['variables'].get('__log__'), sql_session=sql_session)
-                    await self.db.task.mod(task['id'],
+                    browser_fields = {}
+                    if browser_state is not None:
+                        browser_fields['browser_session'] = await self.db.user.encrypt(
+                            task['userid'], browser_state, sql_session=sql_session,
+                        )
+                    changed = await self.db.task.mod(task['id'],
                                            last_success=time.time(),
                                            last_failed_count=0,
                                            success_count=task['success_count'] + 1,
@@ -427,7 +466,12 @@ class BaseWorker:
                                            session=session,
                                            mtime=time.time(),
                                            next=next,
+                                           **browser_fields,
+                                           **write_guard,
                                            sql_session=sql_session)
+                    if browser_expected and changed == 0:
+                        return False
+                    await self.db.tasklog.add(task['id'], success=True, msg=new_env['variables'].get('__log__'), sql_session=sql_session)
                 next_committed = True  # 事务已成功提交, next 已落库
                 t = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 title = f"QD定时任务 {tpl['sitename']}-{task['note']} 成功"
@@ -459,10 +503,15 @@ class BaseWorker:
             e = exec_error
             next_committed = False
             try:
-                is_temporary = self._is_temporary_error(e)
-                next_time_delta = self.failed_count_to_time(
-                    task['last_failed_count'], task['retry_count'], task['retry_interval'],
-                    tpl['interval'] if tpl else None, is_temporary=is_temporary)
+                verification = isinstance(e, VerificationNeeded) and task.get('browser_state')
+                next_time_delta = None
+                browser_fields = {}
+                if verification:
+                    browser_fields['browser_state'] = Task.BROWSER_VERIFY
+                else:
+                    next_time_delta = self.failed_count_to_time(
+                        task['last_failed_count'], task['retry_count'], task['retry_interval'],
+                        tpl['interval'] if tpl else None, is_temporary=self._is_temporary_error(e))
 
                 t = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 sitename = tpl['sitename'] if tpl else ''
@@ -483,19 +532,30 @@ class BaseWorker:
                     next = None
                     # [reliability] 保留失败原因: 永久禁用是最需要"为什么"的告警, 旧实现直接用
                     # "任务已禁用" 覆盖了含时间戳与错误详情的 content, 用户收到告警却无从下手。
-                    content = content + " \\r\\n任务已禁用(重试已耗尽), 请检查凭据/模板后手动启用"
+                    if verification:
+                        content += f" \\r\\n任务已暂停，请前往 /ai-workbench/?task={task['id']} 验证后恢复"
+                    else:
+                        content += " \\r\\n任务已禁用(重试已耗尽), 请检查凭据/模板后手动启用"
                     should_push = 0x1
 
                 async with self.db.transaction() as sql_session:
-                    await self.db.tasklog.add(task['id'], success=False, msg=str(e), sql_session=sql_session)
-                    await self.db.task.mod(task['id'],
+                    if isinstance(e, PageVerification):
+                        browser_fields['browser_session'] = await self.db.user.encrypt(
+                            task['userid'], e.state, sql_session=sql_session,
+                        )
+                    changed = await self.db.task.mod(task['id'],
                                            last_failed=time.time(),
                                            failed_count=task['failed_count'] + 1,
                                            last_failed_count=task['last_failed_count'] + 1,
                                            disabled=disabled,
                                            mtime=time.time(),
                                            next=next,
+                                           **browser_fields,
+                                           **write_guard,
                                            sql_session=sql_session)
+                    if browser_expected and changed == 0:
+                        return False
+                    await self.db.tasklog.add(task['id'], success=False, msg=str(e), sql_session=sql_session)
                 next_committed = True  # 失败善后事务已提交(含 next/disabled), 下面抛错不再兜底覆盖
 
                 logger_worker.error('taskid:%s tplid:%s failed! %.4fs \r\n%s', task.get('id'), task.get('tplid'), time.perf_counter(

@@ -34,6 +34,9 @@
         <i class="fa fa-trash-o"></i> 清空全量日志
       </a>
     </h2>
+    {% if task.browser_state == browser_verify %}
+    <p class="alert alert-warning">站点要求重新验证。<a class="alert-link" href="/ai-workbench/?task={{ task.id }}">打开工作台恢复任务</a></p>
+    {% endif %}
 
     <div class="log-filter-bar well well-sm">
       <div class="form-inline">
