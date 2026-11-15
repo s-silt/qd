@@ -2,8 +2,10 @@
 
 import json
 
-from libs import ai_client
-from libs.signin_workbench import WorkbenchError, clean_chat, credentials_in_chat, page_label, validate_script
+from libs import ai_client, signin_pcbeta
+from libs.signin_workbench import (
+    WorkbenchError, clean_chat, credentials_in_chat, page_label, pcbeta_daily, pcbeta_daily_script, validate_script,
+)
 
 CHAT_CONTEXT = (
     "你是 QD 签到助手。用用户的语言简洁回答，解释如何在浏览器中完成登录和验证、录制签到及定时。"
@@ -119,6 +121,23 @@ async def record_workflow(session, mode, client=None):
     if mode == "cancel":
         session.recording = None
         return {"ok": True}
+    if mode == "auto" and page_label(session.start_url) in (signin_pcbeta.ORIGIN, "http://i.pcbeta.com"):
+        if session.recording is not None:
+            raise WorkbenchError("请先结束当前录制")
+        session.draft = session.captured = session.saved = session.created_task = None
+        receipt = await pcbeta_daily(session.active_page(), session.context)
+        script = pcbeta_daily_script()
+        session.draft = {
+            "summary": receipt,
+            "steps": len(script["steps"]),
+            "requests": 0,
+            "blocked": 0,
+            "verified": True,
+            "site": signin_pcbeta.ORIGIN,
+            "script": script,
+            "full_steps": True,
+        }
+        return {"draft": session.draft}
     client = client or ai_client.AIClient()
     if mode in ("auto", "manual"):
         if not client.enabled:
