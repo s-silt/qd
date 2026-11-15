@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
 import config
-from libs import playwright_capture
+from libs import playwright_capture, signin_pcbeta
 from libs.browser_egress import BrowserEgress, public_addresses
 from libs.button_finder import JS_FIND_CANDIDATES
 
@@ -73,6 +73,7 @@ CLAIM_CHECKIN = re.compile(r"领取(?:签到|打卡)奖励|(?:签到|打卡)领�
 AUTO_NO_BUTTON = "没有可明确识别的签到按钮"
 GOTO_TIMEOUT = 15000
 _replay_slots = asyncio.Semaphore(max(1, playwright_capture.PLAYWRIGHT_MAX_CONCURRENT))
+_pcbeta_lock = asyncio.Lock()
 _browser_lock = asyncio.Lock()
 _browser = None
 _driver = None
@@ -214,6 +215,10 @@ def validate_steps(origin, start_url, steps):
 def validate_script(script):
     if not isinstance(script, dict) or not {"origin", "url", "steps"} <= script.keys():
         raise WorkbenchError("签到脚本格式无效")
+    if "recipe" in script:
+        if script != pcbeta_daily_script():
+            raise WorkbenchError("远景论坛每日打卡脚本格式无效")
+        return script
     validate_steps(script["origin"], script["url"], script["steps"])
     labels = script.get("labels")
     if labels is not None and (
@@ -222,6 +227,16 @@ def validate_script(script):
     ):
         raise WorkbenchError("签到脚本的步骤说明格式无效")
     return script
+
+
+def pcbeta_daily_script():
+    return {
+        "recipe": signin_pcbeta.RECIPE,
+        "origin": signin_pcbeta.ORIGIN,
+        "url": signin_pcbeta.START_URL,
+        "steps": [{"text": name} for name in signin_pcbeta.STEP_TEXTS],
+        "labels": ["任务列表", "任务详情", "签到回执"],
+    }
 
 
 def is_public_signin_query(path, query):
@@ -883,6 +898,53 @@ async def settle(page):
         await page.wait_for_load_state("networkidle", timeout=4000)
 
 
+async def pcbeta_daily(page, context):
+    """Run the built-in daily task in an existing browser with its normal egress policy."""
+    from playwright.async_api import Error as BrowserError
+
+    async with _pcbeta_lock:
+        tabs = set(context.pages)
+        rejected = False
+
+        async def restrict(route):
+            request = route.request
+            if page_label(request.url) != signin_pcbeta.ORIGIN and (
+                request.is_navigation_request() or request.method not in ("GET", "HEAD", "OPTIONS")
+            ):
+                await route.abort()
+                return
+            await route.fallback()
+
+        def on_response(response):
+            nonlocal rejected
+            if (
+                response.request.resource_type == "document"
+                and page_label(response.url) == signin_pcbeta.ORIGIN
+                and response.status in (401, 403)
+            ):
+                rejected = True
+
+        async def check_page():
+            if page.is_closed() or page_label(page.url) != signin_pcbeta.ORIGIN or set(context.pages) != tabs:
+                raise WorkbenchError("远景论坛页面或标签页发生变化，请核对当前任务状态")
+            if rejected or await challenge_visible(page):
+                raise VerificationNeeded("远景论坛要求登录或验证，请在浏览器里完成后再核对任务")
+
+        await context.route("**/*", restrict)
+        context.on("response", on_response)
+        try:
+            return await signin_pcbeta.run_daily_checkin(page, check_page)
+        except signin_pcbeta.DailyTaskError as exc:
+            raise WorkbenchError(str(exc)) from exc
+        except BrowserError as exc:
+            with suppress(BrowserError):
+                await check_page()
+            raise WorkbenchError("无法核实远景论坛每日打卡结果，请查看站点当前状态") from exc
+        finally:
+            context.remove_listener("response", on_response)
+            await context.unroute("**/*", restrict)
+
+
 async def replay(script, state):
     """Run the recorded browser interactions against the user's encrypted session."""
     from playwright.async_api import Error as BrowserError
@@ -923,6 +985,12 @@ async def replay(script, state):
                 or await challenge_visible(page)
             ):
                 raise await verification("站点要求重新登录或验证")
+            if script.get("recipe") == signin_pcbeta.RECIPE:
+                try:
+                    receipt = await pcbeta_daily(page, context)
+                except VerificationNeeded as exc:
+                    raise await verification(str(exc)) from exc
+                return receipt, await storage_for(context, origin)
             before = await success_signal(page)
             if already_checked(before):
                 return "站点页面显示今日已签到", await storage_for(context, origin)
